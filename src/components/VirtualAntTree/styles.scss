@@ -1,0 +1,81 @@
+.virtual-ant-tree {
+  &-container {
+    width: 100%;
+  }
+
+  &-search {
+    margin-bottom: 8px;
+  }
+
+  &-viewport {
+    overflow-y: auto;
+    position: relative;
+    border: 1px solid #d9d9d9;
+    border-radius: 2px;
+  }
+
+  &-content {
+    position: relative;
+  }
+
+  &-search-highlight {
+    color: #1677ff;
+    background-color: rgba(22, 119, 255, 0.1);
+    font-weight: bold;
+  }
+
+  &-node {
+    display: flex;
+    align-items: center;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+
+    &:hover {
+      background-color: rgba(0, 0, 0, 0.04);
+    }
+
+    &-selected {
+      background-color: #e6f4ff;
+
+      &:hover {
+        background-color: #d3e8fc;
+      }
+    }
+
+    &-switcher, &-switcher-spacer {
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    &-icon {
+      margin-right: 8px;
+    }
+
+    &-title {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    // 不同类型节点的样式
+    &-user {
+      .node-icon-user {
+        color: #1677ff;
+      }
+    }
+
+    &-department {
+      font-weight: 500;
+
+      .node-icon-dept {
+        color: #5f6368;
+      }
+    }
+  }
+} 
