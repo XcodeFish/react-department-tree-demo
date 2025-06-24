@@ -75,11 +75,18 @@ const filterTreeNodes = (nodes, searchValue) => {
     const nodeTitle = (node.title || node.name || '').toLowerCase();
     const nodeEmail = (node.email || '').toLowerCase();
     const nodePosition = (node.position || '').toLowerCase();
+    // 添加对新增字段的搜索支持
+    const nodeRealName = (node.realName || '').toLowerCase();
+    const nodePhone = (node.phone || '').toLowerCase();
+    const nodeDepartmentName = (node.departmentName || '').toLowerCase();
     
     const isMatch = 
       nodeTitle.includes(valueLower) || 
       nodeEmail.includes(valueLower) || 
-      nodePosition.includes(valueLower);
+      nodePosition.includes(valueLower) ||
+      nodeRealName.includes(valueLower) ||
+      nodePhone.includes(valueLower) ||
+      nodeDepartmentName.includes(valueLower);
       
     if (isMatch) {
       matchingKeys.add(node.key || node.id);

@@ -232,7 +232,17 @@ export const processTreeData = (treeData, options = {}) => {
         type: node.type || 'department', // 'department' 或 'user'
         avatar: node.avatar,             // 用户头像
         email: node.email,               // 用户邮箱
-        position: node.position          // 用户职位
+        position: node.position,         // 用户职位
+        // 新增字段
+        realName: node.realName,         // 真实姓名
+        phone: node.phone,               // 电话
+        userId: node.userId,             // 员工编号
+        departmentId: node.departmentId, // 所属部门ID
+        departmentName: node.departmentName, // 所属部门名称
+        entryDate: node.entryDate,       // 入职日期
+        deptId: node.deptId,             // 部门编号
+        employeeCount: node.employeeCount, // 部门人数
+        createTime: node.createTime      // 部门创建时间
       };
 
       // 计算初始展开的节点数量
@@ -269,28 +279,111 @@ export const processTreeData = (treeData, options = {}) => {
 export const generateTestData = (departments = 10, usersPerDept = 8, maxLevel = 3) => {
   const data = [];
   
+  // 职位列表
+  const positions = ['产品经理', '前端工程师', '后端工程师', '设计师', 'UI设计师', '测试工程师', '运维工程师', '项目经理'];
+  
+  // 姓氏列表
+  const lastNames = ['张', '王', '李', '赵', '陈', '刘', '杨', '黄', '周', '吴', '徐', '孙', '胡', '朱', '高', '林', '何', '郭', '马', '罗'];
+  
+  // 名字列表（单字）
+  const firstNamesOne = ['伟', '芳', '娜', '秀英', '敏', '静', '丽', '强', '磊', '洋', '艳', '勇', '军', '杰', '娟', '涛', '明', '超', '秀兰', '霞'];
+  
+  // 名字列表（双字）
+  const firstNamesTwo = ['志强', '建国', '文革', '建华', '国庆', '敏华', '秀华', '秀芳', '桂芳', '桂英', '玉梅', '秀珍', '建军', '建平', '志华', '丽华', '丽娟', '婷婷', '佳佳', '宁宁'];
+  
+  // 部门名称列表
+  const departmentNames = [
+    '研发部', '技术部', '产品部', '设计部', '市场部', '销售部', '客服部', 
+    '人力资源部', '财务部', '行政部', '法务部', '运营部', '商务部', '采购部', 
+    '质控部', '物流部', '公关部', '战略部', '投资部', '数据部', '安全部',
+    '培训部', '国际业务部', '客户体验部', '社区运营部', '内容部', '创新部'
+  ];
+  
+  // 部门类型（用于组合部门名称）
+  const departmentTypes = ['中心', '部门', '组', '团队', '事业部'];
+  
+  // 生成随机中文姓名
+  const generateChineseName = () => {
+    const lastName = lastNames[Math.floor(Math.random() * lastNames.length)];
+    // 50%概率使用单字名，50%概率使用双字名
+    if (Math.random() > 0.5) {
+      return lastName + firstNamesOne[Math.floor(Math.random() * firstNamesOne.length)];
+    } else {
+      return lastName + firstNamesTwo[Math.floor(Math.random() * firstNamesTwo.length)];
+    }
+  };
+  
+  // 生成随机手机号
+  const generatePhoneNumber = () => {
+    const prefixes = ['138', '139', '158', '188', '159', '186', '135', '136', '137'];
+    const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
+    let number = '';
+    for (let i = 0; i < 8; i++) {
+      number += Math.floor(Math.random() * 10);
+    }
+    return prefix + number;
+  };
+  
+  // 生成部门名称
+  const generateDepartmentName = (level = 1, parentName = '') => {
+    if (parentName && Math.random() < 0.3) {
+      // 30%概率生成子部门名称（基于父部门）
+      const subType = departmentTypes[Math.floor(Math.random() * departmentTypes.length)];
+      return `${parentName}${subType}${Math.floor(Math.random() * 3) + 1}组`;
+    } else {
+      // 随机部门名称
+      const deptName = departmentNames[Math.floor(Math.random() * departmentNames.length)];
+      if (level > 1 && Math.random() < 0.5) {
+        // 对于非顶级部门，50%概率添加编号
+        return `${deptName}${Math.floor(Math.random() * 3) + 1}组`;
+      }
+      return deptName;
+    }
+  };
+  
   const generateDepartment = (prefix = '', level = 1, deptIndex = 0) => {
     const deptId = prefix ? `${prefix}-dept-${deptIndex}` : `dept-${deptIndex}`;
+    const deptCode = `D${String(level).padStart(2, '0')}${String(deptIndex).padStart(3, '0')}`;
+    
+    // 使用新的部门名称生成函数
+    const deptName = generateDepartmentName(level, prefix);
+    
     const department = {
-      id: deptId,
+      id: deptId,        // 部门ID
+      deptId: deptCode,  // 部门编号
       key: deptId,
-      name: prefix ? `${prefix}部门 ${deptIndex}` : `部门 ${deptIndex}`,
-      title: prefix ? `${prefix}部门 ${deptIndex}` : `部门 ${deptIndex}`,
+      name: deptName,
+      title: deptName,
       type: 'department',
+      employeeCount: usersPerDept,  // 部门人数
+      createTime: new Date(Date.now() - Math.random() * 31536000000).toISOString().split('T')[0], // 随机创建日期（一年内）
       children: []
     };
     
     // 添加用户
     for (let j = 0; j < usersPerDept; j++) {
       const userId = `${deptId}-user-${j}`;
+      const userCode = `U${String(level).padStart(2, '0')}${String(deptIndex).padStart(3, '0')}${String(j).padStart(3, '0')}`;
+      const displayName = `${department.name}的用户 ${j + 1}`; // 显示用名称
+      const realName = generateChineseName(); // 真实姓名
+      const position = positions[Math.floor(Math.random() * positions.length)];
+      const email = `user${j}_${deptCode}@example.com`;
+      const phone = generatePhoneNumber();
+      
       department.children.push({
-        id: userId,
+        id: userId,        // ID
+        userId: userCode,  // 员工编号
         key: userId,
-        name: `${department.name}的用户 ${j + 1}`,
-        title: `${department.name}的用户 ${j + 1}`,
+        name: displayName, // 用于显示的名称
+        title: displayName, // Ant Design Tree组件用的title属性
+        realName: realName, // 真实姓名
         type: 'user',
-        email: `user${j}@example.com`,
-        position: '员工',
+        departmentId: deptId,        // 所属部门ID
+        departmentName: deptName,    // 所属部门名称
+        email: email,                // 邮箱
+        phone: phone,                // 电话
+        position: position,          // 职位
+        entryDate: new Date(Date.now() - Math.random() * 31536000000).toISOString().split('T')[0], // 入职日期
         avatar: null
       });
     }

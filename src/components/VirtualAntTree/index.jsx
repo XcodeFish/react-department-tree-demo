@@ -7,7 +7,7 @@
  * @param {Boolean} props.loading 加载状态
  */
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Spin, Input, Empty } from 'antd';
+import { Spin, Input, Empty, Checkbox } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import VirtualTreeNode from './VirtualTreeNode';
 import { processTreeData, getNodesInViewport, getVisibleNodes } from '../../utils/treeUtils';
@@ -70,6 +70,14 @@ const workerFunction = () => {
         loaded: true,
         // 支持部门和人员两种类型
         type: node.type || 'department',
+        // 添加我们新增的字段，确保它们被传递
+        realName: node.realName,
+        phone: node.phone,
+        userId: node.userId,
+        departmentId: node.departmentId,
+        departmentName: node.departmentName,
+        entryDate: node.entryDate,
+        position: node.position,
       };
 
       nodeMap.set(nodeId, flatNode);
@@ -102,11 +110,17 @@ const workerFunction = () => {
       const nodeTitle = (node.title || node.name || '').toLowerCase();
       const nodeEmail = (node.email || '').toLowerCase();
       const nodePosition = (node.position || '').toLowerCase();
+      const nodeRealName = (node.realName || '').toLowerCase();
+      const nodePhone = (node.phone || '').toLowerCase();
+      const nodeUserId = (node.userId || '').toLowerCase();
       
       const isMatch = 
         nodeTitle.includes(valueLower) || 
         nodeEmail.includes(valueLower) || 
-        nodePosition.includes(valueLower);
+        nodePosition.includes(valueLower) ||
+        nodeRealName.includes(valueLower) ||
+        nodePhone.includes(valueLower) ||
+        nodeUserId.includes(valueLower);
         
       if (isMatch) {
         matchingKeys.add(node.key || node.id);
@@ -283,6 +297,52 @@ const workerFunction = () => {
         break;
       }
 
+      case 'SELECT_NODE': {
+        const { nodeId, selected, multiple, currentSelectedKeys } = data;
+        let newSelectedKeys;
+        
+        if (multiple) {
+          if (selected) {
+            newSelectedKeys = [...currentSelectedKeys, nodeId];
+          } else {
+            newSelectedKeys = currentSelectedKeys.filter(k => k !== nodeId);
+          }
+        } else {
+          newSelectedKeys = selected ? [nodeId] : [];
+        }
+        
+        self.postMessage({
+          type: 'NODE_SELECTED',
+          data: { 
+            nodeId, 
+            selected, 
+            selectedKeys: newSelectedKeys 
+          }
+        });
+        break;
+      }
+
+      case 'CHECK_NODE': {
+        const { nodeId, checked, currentCheckedKeys } = data;
+        let newCheckedKeys;
+        
+        if (checked) {
+          newCheckedKeys = [...currentCheckedKeys, nodeId];
+        } else {
+          newCheckedKeys = currentCheckedKeys.filter(k => k !== nodeId);
+        }
+        
+        self.postMessage({
+          type: 'NODE_CHECKED',
+          data: { 
+            nodeId, 
+            checked, 
+            checkedKeys: newCheckedKeys 
+          }
+        });
+        break;
+      }
+
       default:
         break;
     }
@@ -304,7 +364,16 @@ const VirtualAntTree = ({
   onExpand,
   defaultExpandedKeys = [],
   defaultSelectedKeys = [],
-  defaultCheckedKeys = []
+  defaultCheckedKeys = [],
+  defaultExpandAll = false,
+  selectable = true,
+  showIcon = true,
+  showLine = false,
+  blockNode = true,
+  autoExpandParent = true,
+  loadData = null,
+  onLoad,
+  onVisibleNodesChange
 }) => {
   // 状态定义
   const [visibleNodes, setVisibleNodes] = useState([]);
@@ -315,11 +384,14 @@ const VirtualAntTree = ({
   const [selectedKeys, setSelectedKeys] = useState(defaultSelectedKeys);
   const [checkedKeys, setCheckedKeys] = useState(defaultCheckedKeys);
   const [workerError, setWorkerError] = useState(false);
+  const [isLoading, setIsLoading] = useState(loading);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   // Refs
   const containerRef = useRef(null);
   const workerRef = useRef(null);
   const processedDataRef = useRef(null);
+  const lastSelectedNodeRef = useRef(null);
 
   // 处理树数据
   const processedData = useMemo(() => {
@@ -333,12 +405,13 @@ const VirtualAntTree = ({
     const result = processTreeData(treeData, {
       defaultExpandedKeys: expandedKeys,
       defaultSelectedKeys: selectedKeys,
-      defaultCheckedKeys: checkedKeys
+      defaultCheckedKeys: checkedKeys,
+      defaultExpandAll
     });
     
     processedDataRef.current = result;
     return result;
-  }, [treeData, expandedKeys.length, selectedKeys.length, checkedKeys.length]);
+  }, [treeData, expandedKeys.length, selectedKeys.length, checkedKeys.length, defaultExpandAll]);
   
   // 主线程更新可见节点
   const updateVisibleNodesMainThread = useCallback(() => {
@@ -433,6 +506,11 @@ const VirtualAntTree = ({
               if (vNodes && Array.isArray(vNodes)) {
                 updateNodesInViewport(vNodes);
                 setTotalHeight(vNodes.length * NODE_HEIGHT);
+                
+                // 通知可见节点数量变化
+                if (onVisibleNodesChange) {
+                  onVisibleNodesChange(vNodes.length);
+                }
               }
               break;
             }
@@ -446,7 +524,22 @@ const VirtualAntTree = ({
               
             case 'SEARCH_RESULT':
               // 处理搜索结果
+              setSearchLoading(false);
               updateVisibleNodes();
+              break;
+              
+            case 'NODE_SELECTED':
+              // 处理节点选择结果
+              if (data.selectedKeys) {
+                setSelectedKeys(data.selectedKeys);
+              }
+              break;
+              
+            case 'NODE_CHECKED':
+              // 处理节点复选框结果
+              if (data.checkedKeys) {
+                setCheckedKeys(data.checkedKeys);
+              }
               break;
           }
         };
@@ -465,7 +558,8 @@ const VirtualAntTree = ({
             options: {
               defaultExpandedKeys: expandedKeys,
               defaultSelectedKeys: selectedKeys,
-              defaultCheckedKeys: checkedKeys
+              defaultCheckedKeys: checkedKeys,
+              defaultExpandAll
             }
           }
         });
@@ -491,7 +585,7 @@ const VirtualAntTree = ({
       updateVisibleNodesMainThread();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [treeData, performanceMode]);
+  }, [treeData, performanceMode, defaultExpandAll]);
   
   // 处理滚动事件
   const handleScroll = useCallback((e) => {
@@ -560,54 +654,112 @@ const VirtualAntTree = ({
   
   // 处理节点选择
   const handleSelect = useCallback((key, selected) => {
-    if (multiple) {
-      // 多选模式
-      setSelectedKeys(prev => {
-        if (selected) {
+    if (!selectable) return;
+    
+    const node = processedDataRef.current?.nodeMap.get(key);
+    if (!node) return;
+    
+    // 更新节点选中状态
+    node.selected = selected;
+    lastSelectedNodeRef.current = node;
+    
+    if (performanceMode && workerRef.current && !workerError) {
+      // 使用Worker处理选择逻辑
+      workerRef.current.postMessage({
+        type: 'SELECT_NODE',
+        data: {
+          nodeId: key,
+          selected,
+          multiple,
+          currentSelectedKeys: selectedKeys
+        }
+      });
+    } else {
+      // 主线程处理选择逻辑
+      if (multiple) {
+        // 多选模式
+        setSelectedKeys(prev => {
+          if (selected) {
+            return [...prev, key];
+          } else {
+            return prev.filter(k => k !== key);
+          }
+        });
+      } else {
+        // 单选模式
+        setSelectedKeys(selected ? [key] : []);
+      }
+    }
+    
+    // 调用回调
+    if (onSelect) {
+      const newSelectedKeys = multiple 
+        ? (selected ? [...selectedKeys, key] : selectedKeys.filter(k => k !== key))
+        : (selected ? [key] : []);
+        
+      onSelect(newSelectedKeys, { 
+        selected, 
+        node,
+        nativeEvent: null, // 兼容Ant Design Tree的回调格式
+        selectedNodes: newSelectedKeys.map(k => processedDataRef.current?.nodeMap.get(k)).filter(Boolean)
+      });
+    }
+  }, [multiple, onSelect, selectedKeys, selectable, performanceMode, workerError]);
+  
+  // 处理节点复选框
+  const handleCheck = useCallback((key, checked) => {
+    if (!checkable) return;
+    
+    const node = processedDataRef.current?.nodeMap.get(key);
+    if (!node) return;
+    
+    // 更新节点复选框状态
+    node.checked = checked;
+    
+    if (performanceMode && workerRef.current && !workerError) {
+      // 使用Worker处理复选框逻辑
+      workerRef.current.postMessage({
+        type: 'CHECK_NODE',
+        data: {
+          nodeId: key,
+          checked,
+          currentCheckedKeys: checkedKeys
+        }
+      });
+    } else {
+      // 主线程处理复选框逻辑
+      setCheckedKeys(prev => {
+        if (checked) {
           return [...prev, key];
         } else {
           return prev.filter(k => k !== key);
         }
       });
-    } else {
-      // 单选模式
-      setSelectedKeys([key]);
     }
     
     // 调用回调
-    onSelect && onSelect(key, { 
-      selected, 
-      node: processedDataRef.current?.nodeMap.get(key),
-      selectedKeys: multiple ? 
-        (selected ? [...selectedKeys, key] : selectedKeys.filter(k => k !== key)) : 
-        [key]
-    });
-  }, [multiple, onSelect, selectedKeys]);
-  
-  // 处理节点复选框
-  const handleCheck = useCallback((key, checked) => {
-    setCheckedKeys(prev => {
-      if (checked) {
-        return [...prev, key];
-      } else {
-        return prev.filter(k => k !== key);
-      }
-    });
-    
-    // 调用回调
-    onCheck && onCheck(key, { 
-      checked, 
-      node: processedDataRef.current?.nodeMap.get(key),
-      checkedKeys: checked ? 
-        [...checkedKeys, key] : 
-        checkedKeys.filter(k => k !== key)
-    });
-  }, [checkedKeys, onCheck]);
+    if (onCheck) {
+      const newCheckedKeys = checked 
+        ? [...checkedKeys, key] 
+        : checkedKeys.filter(k => k !== key);
+        
+      onCheck(newCheckedKeys, { 
+        checked, 
+        node,
+        nativeEvent: null, // 兼容Ant Design Tree的回调格式
+        checkedNodes: newCheckedKeys.map(k => processedDataRef.current?.nodeMap.get(k)).filter(Boolean)
+      });
+    }
+  }, [checkable, onCheck, checkedKeys, performanceMode, workerError]);
   
   // 处理搜索
   const handleSearch = useCallback((e) => {
     const value = e.target.value;
     setSearchValue(value);
+    
+    if (value) {
+      setSearchLoading(true);
+    }
     
     if (performanceMode && workerRef.current && !workerError) {
       // 使用Worker搜索
@@ -631,13 +783,20 @@ const VirtualAntTree = ({
           const nodeTitle = (node.title || node.name || '').toLowerCase();
           const nodeEmail = (node.email || '').toLowerCase();
           const nodePosition = (node.position || '').toLowerCase();
+          const nodeRealName = (node.realName || '').toLowerCase();
+          const nodePhone = (node.phone || '').toLowerCase();
+          const nodeUserId = (node.userId || '').toLowerCase();
           
           if (
             nodeTitle.includes(valueLower) || 
             nodeEmail.includes(valueLower) || 
-            nodePosition.includes(valueLower)
+            nodePosition.includes(valueLower) ||
+            nodeRealName.includes(valueLower) ||
+            nodePhone.includes(valueLower) ||
+            nodeUserId.includes(valueLower)
           ) {
             matchingKeys.add(node.key);
+            node.matched = true;
             
             // 展开匹配节点的所有父节点
             let parentId = node.parentId;
@@ -653,11 +812,19 @@ const VirtualAntTree = ({
                 break;
               }
             }
+          } else {
+            node.matched = false;
           }
+        });
+      } else {
+        // 清除搜索标记
+        flattenedData.forEach(node => {
+          node.matched = false;
         });
       }
       
       // 更新可见节点
+      setSearchLoading(false);
       updateVisibleNodesMainThread();
     }
   }, [performanceMode, processedData, updateVisibleNodesMainThread, workerError]);
@@ -665,6 +832,7 @@ const VirtualAntTree = ({
   // 处理清除搜索
   const handleClearSearch = useCallback(() => {
     setSearchValue('');
+    setSearchLoading(false);
     
     if (performanceMode && workerRef.current && !workerError) {
       workerRef.current.postMessage({
@@ -675,9 +843,92 @@ const VirtualAntTree = ({
         }
       });
     } else {
+      // 清除搜索标记
+      if (processedDataRef.current) {
+        processedDataRef.current.flattenedData.forEach(node => {
+          node.matched = false;
+        });
+      }
       updateVisibleNodesMainThread();
     }
   }, [performanceMode, updateVisibleNodesMainThread, workerError]);
+
+  // 监听props变化
+  useEffect(() => {
+    setIsLoading(loading);
+  }, [loading]);
+
+  // 监听选中状态变化
+  useEffect(() => {
+    if (processedDataRef.current) {
+      const { nodeMap } = processedDataRef.current;
+      
+      // 更新节点选中状态
+      selectedKeys.forEach(key => {
+        const node = nodeMap.get(key);
+        if (node) {
+          node.selected = true;
+        }
+      });
+      
+      // 清除未选中节点的选中状态
+      nodeMap.forEach(node => {
+        if (!selectedKeys.includes(node.id || node.key)) {
+          node.selected = false;
+        }
+      });
+    }
+  }, [selectedKeys]);
+
+  // 监听复选框状态变化
+  useEffect(() => {
+    if (processedDataRef.current) {
+      const { nodeMap } = processedDataRef.current;
+      
+      // 更新节点复选框状态
+      checkedKeys.forEach(key => {
+        const node = nodeMap.get(key);
+        if (node) {
+          node.checked = true;
+        }
+      });
+      
+      // 清除未选中节点的复选框状态
+      nodeMap.forEach(node => {
+        if (!checkedKeys.includes(node.id || node.key)) {
+          node.checked = false;
+        }
+      });
+    }
+  }, [checkedKeys]);
+
+  // 监听展开状态变化
+  useEffect(() => {
+    if (processedDataRef.current) {
+      const { nodeMap } = processedDataRef.current;
+      
+      // 更新节点展开状态
+      expandedKeys.forEach(key => {
+        const node = nodeMap.get(key);
+        if (node) {
+          node.expanded = true;
+        }
+      });
+      
+      // 清除未展开节点的展开状态
+      nodeMap.forEach(node => {
+        if (!expandedKeys.includes(node.id || node.key)) {
+          // 保留默认展开的根节点
+          if (!(node.level === 0 && defaultExpandAll)) {
+            node.expanded = false;
+          }
+        }
+      });
+      
+      // 更新可见节点
+      updateVisibleNodes();
+    }
+  }, [expandedKeys]);
 
   return (
     <div className="virtual-ant-tree-container">
@@ -691,11 +942,12 @@ const VirtualAntTree = ({
             onPressEnter={handleSearch}
             allowClear
             onClear={handleClearSearch}
+            {...(searchLoading ? { loading: true } : {})}
           />
         </div>
       )}
       
-      <Spin spinning={loading}>
+      <Spin spinning={!!isLoading}>
         {treeData && treeData.length > 0 ? (
           <div 
             className="virtual-ant-tree-viewport"
@@ -726,6 +978,10 @@ const VirtualAntTree = ({
                     onExpand={handleExpand}
                     onCheck={handleCheck}
                     onSelect={handleSelect}
+                    showIcon={showIcon}
+                    showLine={showLine}
+                    blockNode={blockNode}
+                    selectable={selectable}
                   />
                 </div>
               ))}

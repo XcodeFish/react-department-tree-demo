@@ -15,7 +15,11 @@ const VirtualTreeNode = memo(({
   searchValue = '',
   onExpand,
   onCheck,
-  onSelect
+  onSelect,
+  showIcon = true,
+  showLine = false,
+  blockNode = true,
+  selectable = true
 }) => {
   if (!node) return null;
 
@@ -29,12 +33,19 @@ const VirtualTreeNode = memo(({
     isLeaf, 
     type, 
     level,
-    loading,
+    loading = false,
     matched, // 搜索匹配标志
-    children = []
+    children = [],
+    realName, // 真实姓名
+    position  // 职位
   } = node;
 
-  const nodeTitle = title || name || '';
+  // 根据节点类型和可用信息构建显示文本
+  console.log('Node data:', { type, realName, position, title, name });
+  // 强制显示方式：用户显示姓名+职位，部门显示名称
+  const nodeTitle = type === 'user' ? 
+                    (realName ? `${realName}${position ? ` - ${position}` : ''}` : name) : // 用户节点
+                    (title || name || ''); // 部门节点
   const hasChildren = Array.isArray(children) && children.length > 0;
   const showSwitcher = !isLeaf;
   
@@ -49,7 +60,7 @@ const VirtualTreeNode = memo(({
   // 处理选择
   const handleSelect = (e) => {
     e.stopPropagation();
-    if (onSelect) {
+    if (onSelect && selectable) {
       onSelect(key, !selected);
     }
   };
@@ -65,6 +76,8 @@ const VirtualTreeNode = memo(({
 
   // 判断节点类型图标
   const renderIcon = () => {
+    if (!showIcon) return null;
+    
     if (loading) {
       return <LoadingOutlined className="virtual-ant-tree-node-icon" />;
     }
@@ -106,6 +119,21 @@ const VirtualTreeNode = memo(({
       </span>
     );
   };
+  
+  // 渲染连接线
+  const renderLine = () => {
+    if (!showLine) return null;
+    
+    return (
+      <span 
+        className="virtual-ant-tree-node-line"
+        style={{ 
+          left: `${(level - 1) * 24 + 12}px`,
+          height: isLeaf ? '50%' : '100%'
+        }}
+      />
+    );
+  };
 
   return (
     <div
@@ -114,11 +142,15 @@ const VirtualTreeNode = memo(({
         { 'virtual-ant-tree-node-selected': selected },
         { 'virtual-ant-tree-node-user': type === 'user' },
         { 'virtual-ant-tree-node-department': type !== 'user' },
-        { 'virtual-ant-tree-node-matched': matched || (searchValue && nodeTitle.toLowerCase().includes(searchValue.toLowerCase())) }
+        { 'virtual-ant-tree-node-matched': matched || (searchValue && nodeTitle.toLowerCase().includes(searchValue.toLowerCase())) },
+        { 'virtual-ant-tree-node-block': blockNode },
+        { 'virtual-ant-tree-node-selectable': selectable }
       )}
       style={{ paddingLeft }}
       onClick={handleSelect}
     >
+      {showLine && renderLine()}
+      
       {showSwitcher && (
         <span className="virtual-ant-tree-node-switcher" onClick={handleExpand}>
           {loading ? <LoadingOutlined /> : expanded ? <CaretDownOutlined /> : <CaretRightOutlined />}
