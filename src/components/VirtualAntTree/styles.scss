@@ -81,6 +81,45 @@
       transform: scale(1.05);
     }
   }
+  
+  // 新增选中计数器样式
+  &-selected-counter {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    background-color: #1677ff;
+    color: white;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 13px;
+    z-index: 10;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    
+    &:hover {
+      background-color: #0958d9;
+    }
+    
+    &-icon {
+      margin-right: 6px;
+      display: flex;
+      align-items: center;
+    }
+    
+    &-text {
+      margin-right: 6px;
+    }
+    
+    &-clear {
+      color: white !important;
+      
+      &:hover {
+        background-color: rgba(255, 255, 255, 0.2) !important;
+      }
+    }
+  }
 
   &-checkbox {
     margin-right: 8px;
@@ -250,6 +289,21 @@
         .virtual-ant-tree-node-icon {
           color: #1890ff;
         }
+      }
+    }
+  }
+
+  &-operations {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    
+    .ant-btn {
+      padding: 2px 8px;
+      
+      &:hover {
+        color: #1677ff;
+        background-color: rgba(22, 119, 255, 0.1);
       }
     }
   }

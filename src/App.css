@@ -9,7 +9,7 @@
 
 .app-container {
   max-width: 1200px;
-  margin: 20px auto;
+  margin: 0 auto;
   padding: 20px;
   background-color: #fff;
   border-radius: 8px;
@@ -104,17 +104,18 @@
 /* 响应式样式 */
 @media (max-width: 768px) {
   .app-container {
-    margin: 10px;
-    padding: 15px;
+    padding: 10px;
   }
   
   .app-header {
     flex-direction: column;
     align-items: flex-start;
+    gap: 10px;
   }
   
-  .app-header h1 {
-    margin-bottom: 16px;
+  .ant-modal {
+    max-width: 90vw;
+    margin: 0 auto;
   }
 }
 
@@ -123,15 +124,67 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 20px;
+}
+
+.app-header-actions {
+  display: flex;
+  align-items: center;
 }
 
 .app-header h1 {
   margin: 0;
   font-size: 24px;
-  color: #1890ff;
+  color: #1677ff;
+}
+
+/* 邀请对象样式 */
+.invited-users-container {
+  max-height: 300px;
+  overflow-y: auto;
+  margin-bottom: 16px;
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
+  padding: 8px;
+  background-color: #fafafa;
+}
+
+.invited-user-item {
+  padding: 8px 16px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+  transition: all 0.3s ease;
+}
+
+.invited-user-item:hover {
+  background-color: #f0f7ff;
+}
+
+.no-users-selected {
+  padding: 24px;
+  text-align: center;
+  color: #999;
+  font-style: italic;
+}
+
+/* 按钮样式 */
+.ant-btn-primary {
+  background-color: #1677ff;
+}
+
+.ant-btn-primary:hover {
+  background-color: #0958d9;
+}
+
+/* 模态框样式优化 */
+.ant-modal-title {
+  font-size: 18px;
+  color: #1677ff;
+}
+
+.ant-divider-inner-text {
+  font-weight: 500;
+  color: #1677ff;
 }
 
 /* 邀请用户列表 */

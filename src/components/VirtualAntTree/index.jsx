@@ -7,10 +7,19 @@
  * @param {Boolean} props.loading 加载状态
  */
 import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
-import { Spin, Input, Empty, Checkbox } from 'antd';
-import { SearchOutlined } from '@ant-design/icons';
+import { Spin, Input, Empty, Checkbox, Button, Dropdown, Space, Tooltip } from 'antd';
+import { 
+  SearchOutlined, 
+  CheckOutlined, 
+  CheckSquareOutlined, 
+  BorderOutlined, 
+  DownOutlined, 
+  TeamOutlined,
+  UserOutlined
+} from '@ant-design/icons';
 import VirtualTreeNode from './VirtualTreeNode';
 import { processTreeData, getNodesInViewport, getVisibleNodes } from '../../utils/treeUtils';
+import SelectedCounter from './SelectedCounter';
 import './styles.scss';
 
 // 节点高度固定为40px
@@ -838,6 +847,7 @@ const VirtualAntTree = ({
   multiple = false,
   checkable = false,
   emptyText = '暂无数据',
+  loadingText = '加载中...',
   onSelect,
   onCheck,
   onExpand,
@@ -1492,6 +1502,191 @@ const VirtualAntTree = ({
     
   }, [checkable, checkedKeys, performanceMode, workerError, workerReady, workerUpdateNodes]);
 
+  // 新增全选状态
+  const [allSelected, setAllSelected] = useState(false);
+  
+  // 添加清除选择功能
+  const handleClearSelection = useCallback(() => {
+    setSelectedKeys([]);
+    setCheckedKeys([]);
+    
+    if (onSelect) {
+      onSelect([], { selected: false, nodeIds: [] });
+    }
+    
+    if (onCheck) {
+      onCheck([], { checked: false, checkedNodes: [] });
+    }
+  }, [onSelect, onCheck]);
+  
+  // 全选功能
+  const handleSelectAll = useCallback(() => {
+    if (!processedDataRef.current) return;
+    
+    const { flattenedData } = processedDataRef.current;
+    
+    // 如果当前是搜索状态，只选中匹配的节点
+    const nodesToSelect = searchValue 
+      ? flattenedData.filter(node => node.matched || node.type === 'user')
+      : flattenedData.filter(node => node.type === 'user');
+    
+    const newKeys = nodesToSelect.map(node => node.key);
+    
+    setAllSelected(true);
+    setCheckedKeys(newKeys);
+    
+    if (onCheck && newKeys.length > 0) {
+      onCheck(newKeys, { 
+        checked: true, 
+        checkedNodes: nodesToSelect
+      });
+    }
+  }, [searchValue, onCheck]);
+  
+  // 全不选功能
+  const handleDeselectAll = useCallback(() => {
+    setAllSelected(false);
+    handleClearSelection();
+  }, [handleClearSelection]);
+  
+  // 仅选择部门功能
+  const handleSelectOnlyDepartments = useCallback(() => {
+    if (!processedDataRef.current) return;
+    
+    const { flattenedData } = processedDataRef.current;
+    const departmentNodes = flattenedData.filter(node => node.type !== 'user');
+    const departmentKeys = departmentNodes.map(node => node.key);
+    
+    setCheckedKeys(departmentKeys);
+    
+    if (onCheck) {
+      onCheck(departmentKeys, { 
+        checked: true, 
+        checkedNodes: departmentNodes
+      });
+    }
+  }, [onCheck]);
+  
+  // 仅选择人员功能
+  const handleSelectOnlyUsers = useCallback(() => {
+    if (!processedDataRef.current) return;
+    
+    const { flattenedData } = processedDataRef.current;
+    const userNodes = flattenedData.filter(node => node.type === 'user');
+    const userKeys = userNodes.map(node => node.key);
+    
+    setCheckedKeys(userKeys);
+    
+    if (onCheck) {
+      onCheck(userKeys, { 
+        checked: true, 
+        checkedNodes: userNodes
+      });
+    }
+  }, [onCheck]);
+  
+  // 选中当前可见节点
+  const handleSelectVisible = useCallback(() => {
+    if (!visibleNodes || visibleNodes.length === 0) return;
+    
+    const visibleKeys = visibleNodes.map(node => node.key);
+    setCheckedKeys(visibleKeys);
+    
+    if (onCheck) {
+      onCheck(visibleKeys, { 
+        checked: true, 
+        checkedNodes: visibleNodes
+      });
+    }
+  }, [visibleNodes, onCheck]);
+
+  // 批量选择下拉菜单
+  const batchSelectionMenu = useMemo(() => {
+    return {
+      items: [
+        {
+          key: 'selectAll',
+          label: '全选',
+          icon: <CheckSquareOutlined />,
+        },
+        {
+          key: 'deselectAll',
+          label: '取消全选',
+          icon: <BorderOutlined />,
+        },
+        {
+          key: 'selectUsers',
+          label: '仅选择人员',
+          icon: <UserOutlined />,
+        },
+        {
+          key: 'selectDepartments',
+          label: '仅选择部门',
+          icon: <TeamOutlined />,
+        },
+        {
+          key: 'selectVisible',
+          label: '选择可见节点',
+          icon: <CheckOutlined />,
+        },
+      ],
+      onClick: ({ key }) => {
+        switch (key) {
+          case 'selectAll':
+            handleSelectAll();
+            break;
+          case 'deselectAll':
+            handleDeselectAll();
+            break;
+          case 'selectUsers':
+            handleSelectOnlyUsers();
+            break;
+          case 'selectDepartments':
+            handleSelectOnlyDepartments();
+            break;
+          case 'selectVisible':
+            handleSelectVisible();
+            break;
+          default:
+            break;
+        }
+      },
+    };
+  }, [handleDeselectAll, handleSelectAll, handleSelectOnlyDepartments, handleSelectOnlyUsers, handleSelectVisible]);
+
+  // 渲染顶部操作栏
+  const renderOperations = () => {
+    if (!checkable && !multiple) return null;
+    
+    return (
+      <div className="virtual-ant-tree-operations">
+        <Space size="small">
+          <Dropdown menu={batchSelectionMenu} trigger={['click']}>
+            <Button size="small" type="text">
+              <Space>
+                批量选择
+                <DownOutlined />
+              </Space>
+            </Button>
+          </Dropdown>
+          
+          {(checkedKeys.length > 0 || selectedKeys.length > 0) && (
+            <Tooltip title="清除选择">
+              <Button 
+                size="small" 
+                type="text" 
+                icon={<BorderOutlined />}
+                onClick={handleClearSelection}
+              >
+                清除
+              </Button>
+            </Tooltip>
+          )}
+        </Space>
+      </div>
+    );
+  };
+
   // 渲染虚拟节点
   const renderVirtualNode = (node) => {
     if (!node) return null;
@@ -1527,12 +1722,14 @@ const VirtualAntTree = ({
             allowClear
             onClear={() => {
               // 直接调用handleSearch传入空字符串
-              handleSearch('');
+              handleSearch({ target: { value: '' } });
             }}
-            {...(searchLoading ? { loading: true } : {})}
           />
         </div>
       )}
+      
+      {/* 添加操作栏 */}
+      {renderOperations()}
       
       <Spin spinning={!!isLoading}>
         {treeData && treeData.length > 0 ? (
@@ -1561,23 +1758,26 @@ const VirtualAntTree = ({
                 </div>
               ))}
             </div>
+            
+            {/* 添加选中计数器 */}
+            {(checkedKeys.length > 0 || selectedKeys.length > 0) && (
+              <SelectedCounter 
+                count={checkedKeys
+                  .filter(key => {
+                    // 只统计用户节点
+                    const node = processedDataRef.current?.nodeMap.get(key);
+                    return node && node.type === 'user';
+                  })
+                  .length || selectedKeys.length} 
+                onClear={handleClearSelection}
+                showClearButton={true}
+              />
+            )}
           </div>
         ) : (
           <Empty description={emptyText} />
         )}
       </Spin>
-      
-      {/* 底部状态栏 */}
-      {checkable && (
-        <div className="virtual-ant-tree-footer">
-          <span className="virtual-ant-tree-footer-text">
-            已选: {checkedKeys.filter(key => {
-              const node = processedDataRef.current?.nodeMap.get(key);
-              return node && node.type === 'user';
-            }).length}
-          </span>
-        </div>
-      )}
     </div>
   );
 };
