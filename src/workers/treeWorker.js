@@ -1,409 +1,328 @@
 /**
  * 处理树数据和操作的Web Worker
  * 负责搜索、节点状态更新等计算密集型任务
+ * 优化大数据量树结构的性能表现
  */
 
-// 全局数据
-let treeData = [];
-
-/**
- * 获取所有子节点的键
- * @param {Array} nodes 所有节点
- * @param {string} nodeId 父节点ID
- * @returns {Array} 子节点键数组
- */
-function getChildrenKeys(nodes, nodeId) {
-  const result = [];
-  
-  function findChildren(parentId) {
-    nodes.forEach(node => {
-      if (node.parentId === parentId) {
-        result.push(node.key);
-        findChildren(node.key);
-      }
-    });
-  }
-  
-  findChildren(nodeId);
-  return result;
-}
+// 全局状态
+let nodeMap = new Map();
+let visibilityCache = new Map();
+let flattenedData = [];
+const NODE_HEIGHT = 40; // 与主线程保持一致
 
 /**
- * 获取所有父节点的键
- * @param {Array} nodes 所有节点
- * @param {string} nodeId 子节点ID
- * @returns {Array} 父节点键数组
+ * Worker主处理函数
  */
-function getParentKeys(nodes, nodeId) {
-  const result = [];
-  let currentId = nodeId;
-  
-  while (currentId) {
-    const parentNode = nodes.find(node => node.key === currentId);
-    if (parentNode && parentNode.parentId) {
-      result.push(parentNode.parentId);
-      currentId = parentNode.parentId;
-    } else {
-      currentId = null;
-    }
-  }
-  
-  return result;
-}
+self.onmessage = function(e) {
+  const { type } = e.data;
+  let flattenedData, scrollTop, viewportHeight, buffer, nodeId, expanded, searchTerm, updatedNodes;
+  let visibleNodes, totalHeight, matchResult;
 
-/**
- * 获取节点显示标题
- * @param {Object} node 节点对象
- * @returns {string} 节点标题
- */
-function getNodeTitle(node) {
-  if (node.type === 'user') {
-    return `${node.realName || node.name}${node.position ? ` - ${node.position}` : ''}`;
-  }
-  return node.title || node.name || '';
-}
+  switch (type) {
+    case 'initialize':
+      flattenedData = e.data.flattenedData;
+      initializeData(flattenedData);
+      break;
 
-/**
- * 搜索函数
- * @param {string} keyword 关键词
- * @param {Array} nodes 节点数组
- * @returns {Object} 匹配结果
- */
-function performSearch(keyword, nodes) {
-  if (!keyword || keyword.trim() === '') {
-    return { matchedKeys: [], expandedKeys: [] };
-  }
-  
-  const loweredKeyword = keyword.toLowerCase();
-  const matchedKeys = [];
-  const expandedKeys = new Set();
-  
-  // 搜索匹配节点
-  nodes.forEach(node => {
-    const nodeTitle = getNodeTitle(node);
-    
-    if (nodeTitle.toLowerCase().includes(loweredKeyword)) {
-      matchedKeys.push(node.key);
+    case 'updateVisibleNodes':
+      scrollTop = e.data.scrollTop;
+      viewportHeight = e.data.viewportHeight;
+      buffer = e.data.buffer;
       
-      // 查找所有父节点并添加到expandedKeys
-      let parentId = node.parentId;
-      while (parentId) {
-        expandedKeys.add(parentId);
-        const parentNode = nodes.find(n => n.key === parentId);
-        parentId = parentNode ? parentNode.parentId : null;
+      ({ visibleNodes, totalHeight } = calculateVisibleNodes(
+        scrollTop,
+        viewportHeight,
+        NODE_HEIGHT,
+        buffer
+      ));
+      self.postMessage({ type: 'visibleNodesUpdated', visibleNodes, totalHeight });
+      break;
+
+    case 'toggleNode':
+      nodeId = e.data.nodeId;
+      expanded = e.data.expanded;
+      toggleNodeExpanded(nodeId, expanded);
+      break;
+
+    case 'search':
+      searchTerm = e.data.searchTerm;
+      matchResult = searchNodes(searchTerm);
+      self.postMessage({ type: 'searchComplete', matchResult });
+      break;
+      
+    case 'updateNodes':
+      updatedNodes = e.data.updatedNodes;
+      updateNodes(updatedNodes);
+      break;
+  }
+};
+
+/**
+ * 初始化Worker数据
+ * @param {Array} data 扁平化的树节点数据
+ */
+function initializeData(data) {
+  nodeMap.clear();
+  visibilityCache.clear();
+  flattenedData = [...data];
+
+  // 构建节点索引Map
+  data.forEach(node => {
+    nodeMap.set(node.id, node);
+  });
+
+  // 计算初始可见节点和高度
+  const initialHeight = calculateTotalHeight();
+  self.postMessage({
+    type: 'initialized',
+    success: true,
+    totalHeight: initialHeight
+  });
+}
+
+/**
+ * 更新节点数据
+ * @param {Array} updatedNodes 需要更新的节点数组
+ */
+function updateNodes(updatedNodes) {
+  if (!Array.isArray(updatedNodes) || updatedNodes.length === 0) return;
+  
+  // 更新节点
+  updatedNodes.forEach(node => {
+    if (nodeMap.has(node.id)) {
+      // 更新现有节点
+      const existingNode = nodeMap.get(node.id);
+      nodeMap.set(node.id, { ...existingNode, ...node });
+      
+      // 更新扁平化数据中的节点
+      const index = flattenedData.findIndex(item => item.id === node.id);
+      if (index !== -1) {
+        flattenedData[index] = { ...flattenedData[index], ...node };
       }
+    } else {
+      // 添加新节点
+      nodeMap.set(node.id, node);
+      flattenedData.push(node);
     }
   });
   
+  // 清除可见性缓存
+  visibilityCache.clear();
+  
+  // 重新计算高度并通知主线程
+  const { totalHeight, visibleCount } = calculateTotalHeight();
+  self.postMessage({
+    type: 'nodesUpdated',
+    totalHeight,
+    visibleCount
+  });
+}
+
+/**
+ * 计算可见节点
+ * @param {number} scrollTop 滚动位置
+ * @param {number} viewportHeight 可视区域高度
+ * @param {number} nodeHeight 节点高度
+ * @param {number} buffer 缓冲区大小
+ * @returns {Object} 可见节点和总高度
+ */
+function calculateVisibleNodes(scrollTop, viewportHeight, nodeHeight, buffer) {
+  const visibleNodes = [];
+  let accumulatedHeight = 0;
+  let currentIndex = 0;
+
+  // 遍历所有节点，计算可见性和位置
+  for (const [id, node] of nodeMap.entries()) {
+    const isVisible = isNodeVisible(node);
+
+    if (isVisible) {
+      const offsetTop = accumulatedHeight;
+
+      // 检查节点是否在可视区域内（包括缓冲区）
+      if (offsetTop >= scrollTop - (buffer * nodeHeight) &&
+          offsetTop <= scrollTop + viewportHeight + (buffer * nodeHeight)) {
+
+        visibleNodes.push({
+          ...node,
+          offsetTop,
+          index: currentIndex
+        });
+      }
+
+      accumulatedHeight += nodeHeight;
+      currentIndex++;
+    }
+  }
+
   return {
-    matchedKeys,
-    expandedKeys: Array.from(expandedKeys)
+    visibleNodes,
+    totalHeight: accumulatedHeight,
+    visibleCount: currentIndex
   };
 }
 
 /**
- * 获取可见节点
- * @param {Array} nodes 所有节点
- * @param {Array} expandedKeys 已展开的节点键
- * @returns {Array} 可见节点数组
+ * 节点可见性判断（带缓存）
+ * @param {Object} node 节点对象
+ * @returns {boolean} 是否可见
  */
-function getVisibleNodes(nodes, expandedKeys = []) {
-  if (!nodes || nodes.length === 0) return [];
-  
-  const visibleNodes = [];
-  const expandedKeysSet = new Set(expandedKeys);
-  
-  // 遍历所有节点
-  nodes.forEach(node => {
-    // 如果是顶级节点或父节点已展开，则可见
-    if (node.level === 0 || !node.parentId) {
-      visibleNodes.push(node);
-    } else {
-      // 检查父节点是否展开
-      let isVisible = true;
-      let currentParentId = node.parentId;
-      
-      while (currentParentId) {
-        if (!expandedKeysSet.has(currentParentId)) {
-          // 父节点未展开，此节点不可见
-          isVisible = false;
-          break;
-        }
-        
-        // 查找父节点的父节点
-        const parentNode = nodes.find(n => n.key === currentParentId);
-        currentParentId = parentNode ? parentNode.parentId : null;
-      }
-      
-      if (isVisible) {
-        visibleNodes.push(node);
-      }
+function isNodeVisible(node) {
+  if (visibilityCache.has(node.id)) {
+    return visibilityCache.get(node.id);
+  }
+
+  // 根节点总是可见
+  if (!node.parentId) {
+    visibilityCache.set(node.id, true);
+    return true;
+  }
+
+  // 递归检查父节点展开状态
+  let currentNode = node;
+  let isVisible = true;
+
+  while (currentNode.parentId) {
+    const parent = nodeMap.get(currentNode.parentId);
+    if (!parent || !parent.expanded) {
+      isVisible = false;
+      break;
     }
-  });
-  
-  return visibleNodes;
+    currentNode = parent;
+  }
+
+  visibilityCache.set(node.id, isVisible);
+  return isVisible;
 }
 
 /**
- * 获取视口内节点
- * @param {Array} visibleNodes 可见节点
- * @param {Object} options 选项
- * @returns {Array} 视口内节点
+ * 切换节点展开状态
+ * @param {string} nodeId 节点ID
+ * @param {boolean} expanded 是否展开
+ * @returns {boolean} 操作是否成功
  */
-function getNodesInViewport(visibleNodes, options = {}) {
-  const { 
-    scrollTop = 0, 
-    viewportHeight = 500, 
-    nodeHeight = 40, 
-    overscan = 10 
-  } = options;
-  
-  if (!visibleNodes || visibleNodes.length === 0) return [];
-  
-  // 计算起始和结束索引
-  const startIndex = Math.max(0, Math.floor(scrollTop / nodeHeight) - overscan);
-  const endIndex = Math.min(
-    visibleNodes.length - 1,
-    Math.ceil((scrollTop + viewportHeight) / nodeHeight) + overscan
-  );
-  
-  // 返回视口内节点
-  return visibleNodes.slice(startIndex, endIndex + 1).map((node, idx) => ({
-    ...node,
-    offsetTop: (startIndex + idx) * nodeHeight,
-    index: startIndex + idx
-  }));
+function toggleNodeExpanded(nodeId, expanded) {
+  const node = nodeMap.get(nodeId);
+  if (!node) return false;
+
+  node.expanded = expanded;
+  visibilityCache.clear(); // 清除可见性缓存
+
+  // 计算更新后的高度和可见节点
+  const { totalHeight, visibleCount } = calculateTotalHeight();
+
+  self.postMessage({
+    type: 'nodeToggled',
+    nodeId,
+    expanded,
+    totalHeight,
+    visibleCount,
+  });
+
+  return true;
 }
 
-// 主处理函数
-self.onmessage = function(e) {
-  const { type, data } = e.data;
-  
-  console.log(`Worker收到消息: ${type}`);
-  
-  switch (type) {
-    case 'INIT_DATA': {
-      // 初始化数据
-      if (!data || !data.treeData) {
-        console.error('初始化数据错误: 缺少必要数据');
-        return;
-      }
-      
-      console.log(`Worker初始化，接收到${data.treeData.length}个节点数据`);
-      
-      // 保存数据
-      treeData = data.treeData;
-      
-      // 发送初始化完成消息
-      self.postMessage({
-        type: 'INIT_COMPLETE',
-        data: { success: true }
-      });
-      break;
+/**
+ * 计算整个树的高度
+ * @returns {Object} 总高度和可见节点数
+ */
+function calculateTotalHeight() {
+  let visibleCount = 0;
+
+  for (const [id, node] of nodeMap.entries()) {
+    if (isNodeVisible(node)) {
+      visibleCount++;
     }
-    
-    case 'GET_VISIBLE_NODES': {
-      // 获取可见节点
-      const { nodes, expandedKeys } = data;
-      console.log(`Worker处理GET_VISIBLE_NODES，节点数量: ${nodes?.length || 0}, 展开节点: ${expandedKeys?.length || 0}`);
-      
-      const visibleNodes = getVisibleNodes(nodes, expandedKeys);
-      console.log(`Worker计算得到可见节点数量: ${visibleNodes?.length || 0}`);
-      
-      self.postMessage({
-        type: 'VISIBLE_NODES_RESULT',
-        data: { 
-          visibleNodes,
-          totalHeight: visibleNodes.length * 40 // 节点高度固定为40px
-        }
-      });
-      break;
-    }
-    
-    case 'GET_VIEWPORT_NODES': {
-      // 获取视口内节点
-      const { visibleNodes, scrollOptions } = data;
-      console.log(`Worker处理GET_VIEWPORT_NODES，可见节点数量: ${visibleNodes?.length || 0}`);
-      
-      const nodesInViewport = getNodesInViewport(visibleNodes, scrollOptions);
-      console.log(`Worker计算得到视口内节点数量: ${nodesInViewport?.length || 0}`);
-      
-      self.postMessage({
-        type: 'VIEWPORT_NODES_RESULT',
-        data: { 
-          nodes: nodesInViewport
-        }
-      });
-      break;
-    }
-    
-    case 'SEARCH': {
-      // 搜索节点
-      const { keyword, nodes } = data;
-      console.log(`Worker执行搜索: "${keyword}"`);
-      
-      const results = performSearch(keyword, nodes);
-      
-      self.postMessage({
-        type: 'SEARCH_RESULT',
-        data: { 
-          keyword, 
-          matchedKeys: results.matchedKeys, 
-          expandedKeys: results.expandedKeys 
-        }
-      });
-      break;
-    }
-    
-    case 'CHECK_NODE': {
-      // 处理节点选中状态变更
-      const { nodeId, checked, currentCheckedKeys, nodes } = data;
-      console.log(`Worker处理CHECK_NODE: 节点 ${nodeId}, 设置checked=${checked}, 当前选中数量: ${currentCheckedKeys?.length || 0}`);
-      
-      // 创建节点Map以便快速查找
-      const nodeMap = {};
-      const flatNodes = [];
-      
-      nodes.forEach(node => {
-        nodeMap[node.key] = node;
-        flatNodes.push(node);
-      });
-      
-      // 获取当前节点
-      const currentNode = nodeMap[nodeId];
-      if (!currentNode) {
-        console.error('未找到节点:', nodeId);
-        return;
-      }
-      
-      // 更新节点选中状态
-      let newCheckedKeys = [...(currentCheckedKeys || [])];
-      const updatedNodes = [];
-      
-      // 处理当前节点
-      currentNode.checked = checked;
-      currentNode.indeterminate = false;
-      updatedNodes.push({
-        key: currentNode.key,
-        checked: currentNode.checked,
-        indeterminate: currentNode.indeterminate
-      });
-      
-      // 处理选中操作
-      if (checked) {
-        // 添加当前节点到选中列表
-        if (!newCheckedKeys.includes(nodeId)) {
-          newCheckedKeys.push(nodeId);
-        }
-        
-        // 处理子节点(级联选择)
-        if (currentNode.type === 'department') {
-          const childKeys = getChildrenKeys(nodes, nodeId);
-          childKeys.forEach(childKey => {
-            const childNode = nodeMap[childKey];
-            if (childNode) {
-              childNode.checked = true;
-              childNode.indeterminate = false;
-              
-              if (!newCheckedKeys.includes(childKey)) {
-                newCheckedKeys.push(childKey);
-              }
-              
-              updatedNodes.push({
-                key: childKey,
-                checked: true,
-                indeterminate: false
-              });
-            }
-          });
-        }
-      } else {
-        // 移除当前节点从选中列表
-        newCheckedKeys = newCheckedKeys.filter(key => key !== nodeId);
-        
-        // 处理子节点(级联取消选择)
-        if (currentNode.type === 'department') {
-          const childKeys = getChildrenKeys(nodes, nodeId);
-          childKeys.forEach(childKey => {
-            const childNode = nodeMap[childKey];
-            if (childNode) {
-              childNode.checked = false;
-              childNode.indeterminate = false;
-              
-              newCheckedKeys = newCheckedKeys.filter(key => key !== childKey);
-              
-              updatedNodes.push({
-                key: childKey,
-                checked: false,
-                indeterminate: false
-              });
-            }
-          });
-        }
-      }
-      
-      // 更新父节点状态
-      const parentKeys = getParentKeys(nodes, nodeId);
-      parentKeys.forEach(parentKey => {
-        const parentNode = nodeMap[parentKey];
-        if (parentNode) {
-          // 获取该父节点的所有子节点
-          const children = nodes.filter(node => node.parentId === parentKey);
-          
-          // 检查子节点状态
-          const checkedChildren = children.filter(child => newCheckedKeys.includes(child.key));
-          
-          console.log(`更新父节点 ${parentNode.name || parentNode.title} (${parentKey}) 状态: 子节点${children.length}个, 选中${checkedChildren.length}个`);
-          
-          if (checkedChildren.length === 0) {
-            // 没有选中的子节点
-            parentNode.checked = false;
-            parentNode.indeterminate = false;
-            
-            // 确保从选中列表移除
-            newCheckedKeys = newCheckedKeys.filter(key => key !== parentKey);
-          } else if (checkedChildren.length === children.length) {
-            // 所有子节点都选中
-            parentNode.checked = true;
-            parentNode.indeterminate = false;
-            
-            // 如果父节点之前不在选中列表中，添加它
-            if (!newCheckedKeys.includes(parentKey)) {
-              newCheckedKeys.push(parentKey);
-            }
-          } else {
-            // 部分子节点选中 - 半选状态
-            parentNode.checked = false;
-            parentNode.indeterminate = true;
-            
-            // 如果父节点在选中列表中，移除它
-            newCheckedKeys = newCheckedKeys.filter(key => key !== parentKey);
-          }
-          
-          updatedNodes.push({
-            key: parentKey,
-            checked: parentNode.checked,
-            indeterminate: parentNode.indeterminate
-          });
-          
-          console.log(`父节点 ${parentNode.name || parentNode.title} (${parentKey}) 更新后状态: checked=${parentNode.checked}, indeterminate=${parentNode.indeterminate}`);
-        }
-      });
-      
-      // 返回更新后的状态
-      self.postMessage({
-        type: 'NODE_CHECKED',
-        data: {
-          nodeId,
-          checked,
-          checkedKeys: newCheckedKeys,
-          updatedNodes
-        }
-      });
-      break;
-    }
-    
-    default:
-      console.warn('Worker收到未知类型消息:', type);
   }
-}; 
+
+  return {
+    totalHeight: visibleCount * NODE_HEIGHT,
+    visibleCount
+  };
+}
+
+/**
+ * 搜索节点
+ * @param {string} term 搜索关键字
+ * @returns {Object} 匹配结果
+ */
+function searchNodes(term) {
+  // 确保term是字符串
+  const searchTerm = String(term || '');
+  
+  // 如果搜索词为空，清除所有匹配状态
+  if (!searchTerm || searchTerm.trim() === '') {
+    // 重置搜索状态而不修改节点展开状态
+    for (const [id, node] of nodeMap.entries()) {
+      if (node.matched) {
+        node.matched = false;
+      }
+    }
+    
+    // 不清除可见性缓存，避免重新计算所有节点可见性
+    return { 
+      matchCount: 0, 
+      matches: [],
+      searchTerm: '' // 明确标记这是一个清除搜索的操作
+    };
+  }
+
+  const termLower = searchTerm.toLowerCase();
+  const matches = [];
+
+  // 标记匹配的节点
+  for (const [id, node] of nodeMap.entries()) {
+    // 重置先前的匹配状态
+    const wasMatched = node.matched;
+    node.matched = false;
+    
+    // 部门和人员都支持搜索
+    const isMatch = 
+      (node.name && node.name.toLowerCase().includes(termLower)) ||
+      (node.email && node.email.toLowerCase().includes(termLower)) ||
+      (node.position && node.position.toLowerCase().includes(termLower)) ||
+      (node.realName && node.realName.toLowerCase().includes(termLower));
+    
+    // 只有在状态变化时才更新
+    if (isMatch) {
+      node.matched = true;
+      matches.push(node.id);
+    } else if (wasMatched !== isMatch) {
+      // 状态发生变化
+      node.matched = false;
+    }
+  }
+
+  // 仅当有匹配结果时才展开包含匹配节点的路径
+  if (matches.length > 0) {
+    matches.forEach(matchId => {
+      expandNodePath(matchId);
+    });
+    
+    // 清除可见性缓存以便重新计算
+    visibilityCache.clear();
+  }
+
+  return {
+    matchCount: matches.length,
+    matches,
+    searchTerm: searchTerm // 包含搜索词，以便主线程判断
+  };
+}
+
+/**
+ * 展开包含节点的所有父路径
+ * @param {string} nodeId 节点ID
+ */
+function expandNodePath(nodeId) {
+  let currentId = nodeMap.get(nodeId)?.parentId;
+
+  while (currentId) {
+    const parent = nodeMap.get(currentId);
+    if (parent) {
+      parent.expanded = true;
+      currentId = parent.parentId;
+    } else {
+      break;
+    }
+  }
+} 

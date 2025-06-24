@@ -120,10 +120,10 @@ const VirtualTreeNode = memo(({
   const isChecked = !!checked;
   const isIndeterminate = !!indeterminate;
   
-  // 仅为部门节点添加调试信息
-  if (type === 'department') {
-    console.log(`渲染部门节点: ${nodeTitle} (${key}), checked=${isChecked}, indeterminate=${isIndeterminate}`);
-  }
+  // 注释掉调试日志，避免大量输出导致性能问题
+  // if (type === 'department') {
+  //   console.log(`渲染部门节点: ${nodeTitle} (${key}), checked=${isChecked}, indeterminate=${isIndeterminate}`);
+  // }
 
   return (
     <div
