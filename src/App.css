@@ -8,8 +8,12 @@
 }
 
 .app-container {
-  max-width: 1000px;
-  margin: 0 auto;
+  max-width: 1200px;
+  margin: 20px auto;
+  padding: 20px;
+  background-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 }
 
 /* Ant Design的全局样式将会通过导入来应用 */
@@ -48,4 +52,133 @@
 
 .read-the-docs {
   color: #888;
+}
+
+/* 会议邀请表单样式 */
+.meeting-form {
+  max-width: 100%;
+}
+
+.selected-users-list {
+  max-height: 300px;
+  overflow-y: auto;
+  margin-top: 10px;
+}
+
+.selected-user-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 0;
+}
+
+.selected-user-avatar {
+  margin-right: 12px;
+}
+
+.selected-user-info {
+  flex: 1;
+}
+
+.selected-user-name {
+  font-weight: 500;
+}
+
+.selected-user-position {
+  color: #1677ff;
+  margin-right: 8px;
+}
+
+.selected-user-department {
+  color: #52c41a;
+}
+
+.selected-user-phone {
+  color: #666;
+  font-size: 12px;
+}
+
+.ant-tag {
+  margin-bottom: 4px;
+}
+
+/* 响应式样式 */
+@media (max-width: 768px) {
+  .app-container {
+    margin: 10px;
+    padding: 15px;
+  }
+  
+  .app-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  
+  .app-header h1 {
+    margin-bottom: 16px;
+  }
+}
+
+/* 页头样式 */
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 24px;
+  color: #1890ff;
+}
+
+/* 邀请用户列表 */
+.invited-users {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
+  padding: 10px;
+}
+
+.invited-user {
+  padding: 8px;
+  border-bottom: 1px solid #f5f5f5;
+  display: flex;
+  align-items: center;
+}
+
+.invited-user:last-child {
+  border-bottom: none;
+}
+
+.invited-user .position {
+  color: #666;
+  margin-left: 4px;
+}
+
+/* 树组件自定义样式 */
+.virtual-ant-tree-node-user {
+  color: #333;
+}
+
+.virtual-ant-tree-node-department {
+  font-weight: 500;
+  color: #1890ff;
+}
+
+.virtual-ant-tree-node-selected {
+  background-color: #e6f7ff;
+}
+
+.virtual-ant-tree-node-checked {
+  background-color: #f0f8ff;
+}
+
+.virtual-ant-tree-search-highlight {
+  color: #f50;
+  background-color: transparent;
+  font-weight: bold;
 }

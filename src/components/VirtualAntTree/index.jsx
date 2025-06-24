@@ -16,6 +16,106 @@ import './styles.scss';
 // 节点高度固定为40px
 const NODE_HEIGHT = 40; 
 
+// 获取指定节点的所有子节点键值
+const getChildrenKeys = (nodes, nodeId) => {
+  const result = [];
+  
+  const findChildren = (parentId) => {
+    nodes.forEach(node => {
+      if (node.parentId === parentId) {
+        result.push(node.key);
+        findChildren(node.key);
+      }
+    });
+  };
+  
+  findChildren(nodeId);
+  return result;
+};
+
+// 获取指定节点的所有父节点键值
+const getParentKeys = (nodes, nodeId) => {
+  const result = [];
+  let currentId = nodeId;
+  
+  while (currentId) {
+    const parent = nodes.find(node => node.key === currentId)?.parentId;
+    if (parent) {
+      result.push(parent);
+      currentId = parent;
+    } else {
+      currentId = null;
+    }
+  }
+  
+  return result;
+};
+
+// 更新父节点选中状态
+const updateParentCheckedState = (nodes, nodeMap, nodeId, checkedKeys) => {
+  const updateParentState = (id) => {
+    const node = nodes.find(n => n.key === id);
+    if (!node || !node.parentId) return;
+    
+    const parentId = node.parentId;
+    const parentNode = nodeMap.get(parentId);
+    if (!parentNode) return;
+    
+    // 获取所有直接子节点
+    const childrenNodes = nodes.filter(n => n.parentId === parentId);
+    if (childrenNodes.length === 0) return;
+    
+    // 统计子节点状态
+    const checkedChildrenCount = childrenNodes.filter(child => 
+      checkedKeys.includes(child.key)
+    ).length;
+    
+    // 更新父节点状态
+    if (checkedChildrenCount === 0) {
+      // 无子节点选中，父节点未选中且不是半选
+      parentNode.checked = false;
+      parentNode.indeterminate = false;
+      
+      // 如果父节点在选中列表中，移除它
+      if (checkedKeys.includes(parentId)) {
+        const index = checkedKeys.indexOf(parentId);
+        if (index > -1) {
+          checkedKeys.splice(index, 1);
+        }
+      }
+    } else if (checkedChildrenCount === childrenNodes.length) {
+      // 所有子节点选中，父节点选中且不是半选
+      parentNode.checked = true;
+      parentNode.indeterminate = false;
+      
+      // 添加父节点到选中列表
+      if (!checkedKeys.includes(parentId)) {
+        checkedKeys.push(parentId);
+      }
+    } else {
+      // 部分子节点选中，父节点半选
+      parentNode.checked = false;
+      parentNode.indeterminate = true;
+      
+      // 如果父节点已选中，移除它
+      if (checkedKeys.includes(parentId)) {
+        const index = checkedKeys.indexOf(parentId);
+        if (index > -1) {
+          checkedKeys.splice(index, 1);
+        }
+      }
+    }
+    
+    // 递归更新上层父节点
+    if (parentNode.parentId) {
+      updateParentState(parentId);
+    }
+  };
+  
+  // 更新当前节点的父节点
+  updateParentState(nodeId);
+};
+
 // 创建内联Worker函数
 const createInlineWorker = (workerFunction) => {
   // 将函数体转换为字符串
@@ -244,16 +344,40 @@ const workerFunction = () => {
     const { type, data } = e.data;
 
     switch (type) {
-      case 'INITIALIZE': {
-        const { treeData, options } = data;
-        const result = flattenTree(treeData, options);
-        self.postMessage({
-          type: 'INITIALIZED',
-          data: {
-            flatNodes: result.flatNodes,
-            nodeMap: [...result.nodeMap]  // 转换为可序列化的数组形式
-          }
-        });
+      case 'INIT_DATA': {
+        // 初始化数据
+        console.log('Worker初始化数据:', data);
+        break;
+      }
+      
+      case 'SEARCH': {
+        // 搜索节点
+        console.log('Worker搜索节点:', data);
+        break;
+      }
+      
+      case 'UPDATE_NODE': {
+        // 更新节点状态
+        console.log('Worker更新节点状态:', data);
+        
+        if (data.updatedNodes && Array.isArray(data.updatedNodes)) {
+          // 更新节点状态
+          data.updatedNodes.forEach(updatedNode => {
+            const node = nodeMap.get(updatedNode.key);
+            if (node) {
+              node.checked = updatedNode.checked;
+              node.indeterminate = updatedNode.indeterminate;
+            }
+          });
+          
+          // 更新视图中的节点
+          self.postMessage({
+            type: 'NODE_UPDATED',
+            data: {
+              updatedNodes: data.updatedNodes
+            }
+          });
+        }
         break;
       }
 
@@ -287,16 +411,6 @@ const workerFunction = () => {
         break;
       }
 
-      case 'UPDATE_NODE': {
-        const { nodeId, updates } = data;
-        // 节点更新逻辑将在这里实现
-        self.postMessage({
-          type: 'NODE_UPDATED',
-          data: { nodeId }
-        });
-        break;
-      }
-
       case 'SELECT_NODE': {
         const { nodeId, selected, multiple, currentSelectedKeys } = data;
         let newSelectedKeys;
@@ -323,7 +437,7 @@ const workerFunction = () => {
       }
 
       case 'CHECK_NODE': {
-        const { nodeId, checked, currentCheckedKeys } = data;
+        const { nodeId, checked, currentCheckedKeys, nodes } = data;
         let newCheckedKeys;
         
         if (checked) {
@@ -337,14 +451,112 @@ const workerFunction = () => {
           data: { 
             nodeId, 
             checked, 
-            checkedKeys: newCheckedKeys 
+            checkedKeys: newCheckedKeys,
+            nodes: nodes || []
           }
         });
+        
+        // 处理级联选择和半选状态更新
+        if (data.updatedNodes && Array.isArray(data.updatedNodes)) {
+          // 更新节点状态
+          data.updatedNodes.forEach(updatedNode => {
+            const node = nodes.find(n => n.id === updatedNode.id || n.key === updatedNode.key);
+            if (node) {
+              node.checked = updatedNode.checked;
+              node.indeterminate = updatedNode.indeterminate;
+            }
+          });
+          
+          // 更新视图中的节点
+          self.postMessage({
+            type: 'NODE_UPDATED',
+            data: {
+              updatedNodes: data.updatedNodes
+            }
+          });
+        }
+        break;
+      }
+
+      case 'NODE_CHECKED': {
+        // 处理节点复选框结果
+        console.log(`Worker返回选中结果: 节点${data.nodeId}, checked=${data.checked}, 选中数量=${data.checkedKeys.length}`);
+        
+        if (data.checkedKeys) {
+          setCheckedKeys(data.checkedKeys);
+        }
+        
+        // 处理级联选择和半选状态更新
+        if (data.updatedNodes && Array.isArray(data.updatedNodes)) {
+          console.log('收到Worker更新:', data.updatedNodes.length, '个节点状态变更');
+          
+          // 更新节点状态
+          data.updatedNodes.forEach(updatedNode => {
+            const node = processedDataRef.current?.nodeMap.get(updatedNode.key);
+            if (node) {
+              node.checked = updatedNode.checked;
+              node.indeterminate = updatedNode.indeterminate;
+              console.log(`更新节点 ${node.name || node.title} (${updatedNode.key}) 状态: checked=${updatedNode.checked}, indeterminate=${updatedNode.indeterminate}`);
+            }
+          });
+          
+          // 强制重新渲染
+          setForceUpdate(prev => prev + 1);
+          
+          // 如果有回调，调用它
+          if (onCheck) {
+            // 获取所有选中的节点
+            const checkedNodes = data.checkedKeys.map(key => {
+              return processedDataRef.current?.nodeMap.get(key);
+            }).filter(Boolean);
+            
+            // 调用回调
+            onCheck(data.checkedKeys, {
+              checkedNodes,
+              node: processedDataRef.current?.nodeMap.get(data.nodeId),
+              checked: data.checked,
+              // 添加flattenedData以便App组件使用
+              flattenedData: processedDataRef.current?.flattenedData
+            });
+          }
+        }
+        break;
+      }
+
+      case 'VISIBLE_NODES_RESULT': {
+        // 处理可见节点结果
+        console.log(`Worker返回可见节点结果: ${data.visibleNodes?.length || 0}个节点`);
+        
+        // 更新总高度
+        setTotalHeight(data.totalHeight || 0);
+        
+        // 更新视口内节点
+        if (data.visibleNodes && data.visibleNodes.length > 0) {
+          updateNodesInViewport(data.visibleNodes);
+        } else {
+          setVisibleNodes([]);
+        }
+        
+        // 通知可见节点变化
+        onVisibleNodesChange && onVisibleNodesChange(data.visibleNodes || []);
+        break;
+      }
+      
+      case 'VIEWPORT_NODES_RESULT': {
+        // 处理视口内节点结果
+        console.log(`Worker返回视口内节点结果: ${data.nodes?.length || 0}个节点`);
+        
+        // 更新视口内节点
+        if (data.nodes && data.nodes.length > 0) {
+          setVisibleNodes(data.nodes);
+        } else {
+          setVisibleNodes([]);
+        }
         break;
       }
 
       default:
-        break;
+        console.warn('收到未知类型Worker消息:', type);
     }
   };
 };
@@ -386,6 +598,8 @@ const VirtualAntTree = ({
   const [workerError, setWorkerError] = useState(false);
   const [isLoading, setIsLoading] = useState(loading);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [matchedKeys, setMatchedKeys] = useState([]);
+  const [forceUpdate, setForceUpdate] = useState(0);
 
   // Refs
   const containerRef = useRef(null);
@@ -482,110 +696,140 @@ const VirtualAntTree = ({
     }
   }, [performanceMode, expandedKeys, updateVisibleNodesMainThread, workerError]);
   
-  // 初始化 Web Worker
-  useEffect(() => {
-    if (performanceMode && window.Worker && !workerError) {
-      try {
-        // 使用内联Worker方式创建
-        workerRef.current = createInlineWorker(workerFunction);
-        
-        workerRef.current.onmessage = (e) => {
-          const { type, data } = e.data || {};
-          
-          if (!data) return;
-          
-          switch (type) {
-            case 'INITIALIZED':
-              // Worker初始化完成后更新DOM
-              updateVisibleNodes();
-              break;
-              
-            case 'VISIBLE_NODES_RESULT': {
-              // 处理可见节点结果
-              const { visibleNodes: vNodes } = data;
-              if (vNodes && Array.isArray(vNodes)) {
-                updateNodesInViewport(vNodes);
-                setTotalHeight(vNodes.length * NODE_HEIGHT);
-                
-                // 通知可见节点数量变化
-                if (onVisibleNodesChange) {
-                  onVisibleNodesChange(vNodes.length);
-                }
-              }
-              break;
-            }
-              
-            case 'VIEWPORT_NODES_RESULT':
-              // 处理视口内节点
-              if (data.viewportNodes && Array.isArray(data.viewportNodes)) {
-                setVisibleNodes(data.viewportNodes);
-              }
-              break;
-              
-            case 'SEARCH_RESULT':
-              // 处理搜索结果
-              setSearchLoading(false);
-              updateVisibleNodes();
-              break;
-              
-            case 'NODE_SELECTED':
-              // 处理节点选择结果
-              if (data.selectedKeys) {
-                setSelectedKeys(data.selectedKeys);
-              }
-              break;
-              
-            case 'NODE_CHECKED':
-              // 处理节点复选框结果
-              if (data.checkedKeys) {
-                setCheckedKeys(data.checkedKeys);
-              }
-              break;
-          }
-        };
-        
-        workerRef.current.onerror = (error) => {
-          console.error('Worker执行出错:', error);
-          setWorkerError(true);
-          updateVisibleNodesMainThread();
-        };
-        
-        // 初始化Worker
-        workerRef.current.postMessage({
-          type: 'INITIALIZE',
-          data: {
-            treeData: treeData || [],
-            options: {
-              defaultExpandedKeys: expandedKeys,
-              defaultSelectedKeys: selectedKeys,
-              defaultCheckedKeys: checkedKeys,
-              defaultExpandAll
-            }
-          }
-        });
-      } catch (error) {
-        console.error('初始化Worker失败:', error);
-        // 如果Worker初始化失败，回退到主线程处理
-        setWorkerError(true);
-        updateVisibleNodesMainThread();
-      }
+  // 初始化Worker
+  const initWorker = useCallback(() => {
+    if (!performanceMode) return;
+
+    try {
+      const worker = new Worker(new URL('../../workers/treeWorker.js', import.meta.url), { type: 'module' });
       
-      return () => {
-        try {
-          if (workerRef.current) {
-            workerRef.current.terminate();
-            workerRef.current = null;
+      // 设置消息处理
+      worker.onmessage = (e) => {
+        const { type, data } = e.data;
+        
+        // 根据消息类型处理
+        switch (type) {
+          case 'INIT_COMPLETE': {
+            // Worker初始化完成
+            console.log('Worker初始化完成');
+            break;
           }
-        } catch (e) {
-          console.error('终止Worker失败:', e);
+          
+          case 'SEARCH_RESULT': {
+            // 搜索结果返回
+            console.log(`Worker搜索结果: 关键词"${data.keyword}", 匹配${data.matchedKeys.length}个节点, 展开${data.expandedKeys.length}个节点`);
+            
+            // 更新匹配结果
+            setMatchedKeys(data.matchedKeys);
+            
+            // 更新展开节点
+            setExpandedKeys(prev => [...new Set([...prev, ...data.expandedKeys])]);
+            break;
+          }
+          
+          case 'NODE_CHECKED': {
+            // 处理节点复选框结果
+            console.log(`Worker返回选中结果: 节点${data.nodeId}, checked=${data.checked}, 选中数量=${data.checkedKeys.length}`);
+            
+            if (data.checkedKeys) {
+              setCheckedKeys(data.checkedKeys);
+            }
+            
+            // 处理级联选择和半选状态更新
+            if (data.updatedNodes && Array.isArray(data.updatedNodes)) {
+              console.log('收到Worker更新:', data.updatedNodes.length, '个节点状态变更');
+              
+              // 更新节点状态
+              data.updatedNodes.forEach(updatedNode => {
+                const node = processedDataRef.current?.nodeMap.get(updatedNode.key);
+                if (node) {
+                  node.checked = updatedNode.checked;
+                  node.indeterminate = updatedNode.indeterminate;
+                  console.log(`更新节点 ${node.name || node.title} (${updatedNode.key}) 状态: checked=${updatedNode.checked}, indeterminate=${updatedNode.indeterminate}`);
+                }
+              });
+              
+              // 强制重新渲染
+              setForceUpdate(prev => prev + 1);
+              
+              // 如果有回调，调用它
+              if (onCheck) {
+                // 获取所有选中的节点
+                const checkedNodes = data.checkedKeys.map(key => {
+                  return processedDataRef.current?.nodeMap.get(key);
+                }).filter(Boolean);
+                
+                // 调用回调
+                onCheck(data.checkedKeys, {
+                  checkedNodes,
+                  node: processedDataRef.current?.nodeMap.get(data.nodeId),
+                  checked: data.checked,
+                  // 添加flattenedData以便App组件使用
+                  flattenedData: processedDataRef.current?.flattenedData
+                });
+              }
+            }
+            break;
+          }
+          
+          case 'VISIBLE_NODES_RESULT': {
+            // 处理可见节点结果
+            console.log(`Worker返回可见节点结果: ${data.visibleNodes?.length || 0}个节点`);
+            
+            // 更新总高度
+            setTotalHeight(data.totalHeight || 0);
+            
+            // 更新视口内节点
+            if (data.visibleNodes && data.visibleNodes.length > 0) {
+              updateNodesInViewport(data.visibleNodes);
+            } else {
+              setVisibleNodes([]);
+            }
+            
+            // 通知可见节点变化
+            onVisibleNodesChange && onVisibleNodesChange(data.visibleNodes || []);
+            break;
+          }
+          
+          case 'VIEWPORT_NODES_RESULT': {
+            // 处理视口内节点结果
+            console.log(`Worker返回视口内节点结果: ${data.nodes?.length || 0}个节点`);
+            
+            // 更新视口内节点
+            if (data.nodes && data.nodes.length > 0) {
+              setVisibleNodes(data.nodes);
+            } else {
+              setVisibleNodes([]);
+            }
+            break;
+          }
+          
+          default:
+            console.warn('收到未知类型Worker消息:', type);
         }
       };
-    } else {
-      // 不使用Worker时的初始化
-      updateVisibleNodesMainThread();
+      
+      // 设置错误处理
+      worker.onerror = (err) => {
+        console.error('Worker错误:', err);
+        setWorkerError(true);
+      };
+      
+      // 保存Worker引用
+      workerRef.current = worker;
+      
+      // 初始化数据
+      if (treeData && treeData.length > 0) {
+        worker.postMessage({
+          type: 'INIT_DATA',
+          data: { treeData }
+        });
+      }
+    } catch (err) {
+      console.error('初始化Worker失败:', err);
+      setWorkerError(true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [treeData, performanceMode, defaultExpandAll]);
+  }, [performanceMode, treeData]);
   
   // 处理滚动事件
   const handleScroll = useCallback((e) => {
@@ -663,6 +907,17 @@ const VirtualAntTree = ({
     node.selected = selected;
     lastSelectedNodeRef.current = node;
     
+    // 如果是用户节点，同时更新复选框状态
+    if (node.type === 'user' && checkable) {
+      node.checked = selected;
+      // 更新复选框状态
+      if (selected) {
+        setCheckedKeys(prev => prev.includes(key) ? prev : [...prev, key]);
+      } else {
+        setCheckedKeys(prev => prev.filter(k => k !== key));
+      }
+    }
+    
     if (performanceMode && workerRef.current && !workerError) {
       // 使用Worker处理选择逻辑
       workerRef.current.postMessage({
@@ -704,17 +959,20 @@ const VirtualAntTree = ({
         selectedNodes: newSelectedKeys.map(k => processedDataRef.current?.nodeMap.get(k)).filter(Boolean)
       });
     }
-  }, [multiple, onSelect, selectedKeys, selectable, performanceMode, workerError]);
+  }, [multiple, onSelect, selectedKeys, selectable, performanceMode, workerError, checkable]);
   
   // 处理节点复选框
   const handleCheck = useCallback((key, checked) => {
     if (!checkable) return;
+    
+    console.log(`handleCheck调用: 节点 ${key}, 设置checked=${checked}`);
     
     const node = processedDataRef.current?.nodeMap.get(key);
     if (!node) return;
     
     // 更新节点复选框状态
     node.checked = checked;
+    node.indeterminate = false;
     
     if (performanceMode && workerRef.current && !workerError) {
       // 使用Worker处理复选框逻辑
@@ -723,34 +981,91 @@ const VirtualAntTree = ({
         data: {
           nodeId: key,
           checked,
-          currentCheckedKeys: checkedKeys
+          currentCheckedKeys: checkedKeys,
+          nodes: processedDataRef.current?.flattenedData || [] // 发送所有节点数据以支持级联选择
         }
       });
     } else {
       // 主线程处理复选框逻辑
-      setCheckedKeys(prev => {
-        if (checked) {
-          return [...prev, key];
-        } else {
-          return prev.filter(k => k !== key);
+      const { flattenedData, nodeMap } = processedDataRef.current || {};
+      let newCheckedKeys = [...checkedKeys];
+      
+      if (checked) {
+        // 添加当前节点
+        if (!newCheckedKeys.includes(key)) {
+          newCheckedKeys.push(key);
         }
-      });
-    }
-    
-    // 调用回调
-    if (onCheck) {
-      const newCheckedKeys = checked 
-        ? [...checkedKeys, key] 
-        : checkedKeys.filter(k => k !== key);
         
-      onCheck(newCheckedKeys, { 
-        checked, 
-        node,
-        nativeEvent: null, // 兼容Ant Design Tree的回调格式
-        checkedNodes: newCheckedKeys.map(k => processedDataRef.current?.nodeMap.get(k)).filter(Boolean)
+        // 如果是部门节点，级联选择所有子节点
+        if (node.type === 'department') {
+          const childrenKeys = getChildrenKeys(flattenedData, key);
+          childrenKeys.forEach(childKey => {
+            if (!newCheckedKeys.includes(childKey)) {
+              newCheckedKeys.push(childKey);
+            }
+            // 更新子节点状态
+            const childNode = nodeMap.get(childKey);
+            if (childNode) {
+              childNode.checked = true;
+              childNode.indeterminate = false;
+            }
+          });
+        }
+      } else {
+        // 移除当前节点
+        newCheckedKeys = newCheckedKeys.filter(k => k !== key);
+        
+        // 如果是部门节点，级联取消所有子节点
+        if (node.type === 'department') {
+          const childrenKeys = getChildrenKeys(flattenedData, key);
+          newCheckedKeys = newCheckedKeys.filter(k => !childrenKeys.includes(k));
+          
+          // 更新子节点状态
+          childrenKeys.forEach(childKey => {
+            const childNode = nodeMap.get(childKey);
+            if (childNode) {
+              childNode.checked = false;
+              childNode.indeterminate = false;
+            }
+          });
+        }
+      }
+      
+      // 更新父节点状态
+      if (node.parentId) {
+        updateParentCheckedState(flattenedData, nodeMap, key, newCheckedKeys);
+      }
+      
+      // 更新视图
+      setCheckedKeys(newCheckedKeys);
+      
+      // 为确保视图更新，强制刷新可见节点
+      setVisibleNodes(prev => {
+        // 创建包含更新后状态的新数组
+        return prev.map(vNode => {
+          // 如果节点在nodeMap中有更新，则应用新状态
+          const updatedNode = nodeMap.get(vNode.key);
+          if (updatedNode) {
+            return {
+              ...vNode,
+              checked: updatedNode.checked,
+              indeterminate: updatedNode.indeterminate
+            };
+          }
+          return vNode;
+        });
       });
+      
+      // 触发回调
+      if (onCheck) {
+        onCheck(newCheckedKeys, {
+          checkedNodes: newCheckedKeys.map(k => nodeMap.get(k)).filter(Boolean),
+          node,
+          checked
+        });
+      }
     }
-  }, [checkable, onCheck, checkedKeys, performanceMode, workerError]);
+  }, [checkable, checkedKeys, onCheck, performanceMode, workerError]);
   
   // 处理搜索
   const handleSearch = useCallback((e) => {
@@ -930,6 +1245,62 @@ const VirtualAntTree = ({
     }
   }, [expandedKeys]);
 
+  // 初始化Worker
+  useEffect(() => {
+    if (performanceMode && !workerError) {
+      initWorker();
+      
+      return () => {
+        // 清理Worker
+        if (workerRef.current) {
+          workerRef.current.terminate();
+          workerRef.current = null;
+        }
+      };
+    } else {
+      // 主线程处理
+      processTreeData();
+    }
+  }, [performanceMode, workerError, initWorker]);
+
+  // 初始化加载数据后更新可见节点
+  useEffect(() => {
+    if (treeData && treeData.length > 0 && !loading) {
+      // 如果使用Worker模式，需要初始化数据
+      if (performanceMode && workerRef.current && !workerError) {
+        workerRef.current.postMessage({
+          type: 'INIT_DATA',
+          data: { treeData }
+        });
+      }
+      
+      // 主线程处理可见节点
+      updateVisibleNodesMainThread();
+    }
+  }, [treeData, loading, performanceMode, workerError, updateVisibleNodesMainThread]);
+
+  // 渲染虚拟节点
+  const renderVirtualNode = (node) => {
+    if (!node) return null;
+    
+    return (
+      <VirtualTreeNode
+        key={node.key}
+        node={node}
+        checkable={checkable}
+        multiple={multiple}
+        searchValue={searchValue}
+        onExpand={handleExpand}
+        onCheck={handleCheck}
+        onSelect={handleSelect}
+        showIcon={showIcon}
+        showLine={showLine}
+        blockNode={blockNode}
+        selectable={selectable}
+      />
+    );
+  };
+
   return (
     <div className="virtual-ant-tree-container">
       {showSearch && (
@@ -970,19 +1341,7 @@ const VirtualAntTree = ({
                     height: NODE_HEIGHT
                   }}
                 >
-                  <VirtualTreeNode 
-                    node={node}
-                    checkable={checkable}
-                    multiple={multiple}
-                    searchValue={searchValue}
-                    onExpand={handleExpand}
-                    onCheck={handleCheck}
-                    onSelect={handleSelect}
-                    showIcon={showIcon}
-                    showLine={showLine}
-                    blockNode={blockNode}
-                    selectable={selectable}
-                  />
+                  {renderVirtualNode(node)}
                 </div>
               ))}
             </div>
@@ -992,9 +1351,15 @@ const VirtualAntTree = ({
         )}
       </Spin>
       
-      {multiple && selectedKeys.length > 0 && (
-        <div className="virtual-ant-tree-selected-count">
-          已选: {selectedKeys.length}
+      {/* 底部状态栏 */}
+      {checkable && (
+        <div className="virtual-ant-tree-footer">
+          <span className="virtual-ant-tree-footer-text">
+            已选: {checkedKeys.filter(key => {
+              const node = processedDataRef.current?.nodeMap.get(key);
+              return node && node.type === 'user';
+            }).length}
+          </span>
         </div>
       )}
     </div>
