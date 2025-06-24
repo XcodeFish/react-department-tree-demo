@@ -1,19 +1,43 @@
-import React from 'react';
-import { CaretDownOutlined, CaretRightOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
+/**
+ * 虚拟树节点组件
+ * 用于渲染单个树节点，支持展开/折叠、选择、复选等功能
+ * @param {Object} props 组件属性
+ */
+import React, { memo } from 'react';
+import { CaretDownOutlined, CaretRightOutlined, TeamOutlined, UserOutlined, LoadingOutlined } from '@ant-design/icons';
 import { Checkbox } from 'antd';
 import classNames from 'classnames';
 
-const VirtualTreeNode = ({
+const VirtualTreeNode = memo(({
   node,
-  checkable,
-  multiple,
-  searchValue,
+  checkable = false,
+  multiple = false,
+  searchValue = '',
   onExpand,
   onCheck,
   onSelect
 }) => {
-  const { title, key, expanded, checked, selected, isLeaf, type, level } = node;
+  if (!node) return null;
 
+  const { 
+    key,
+    title, 
+    name, 
+    expanded, 
+    checked, 
+    selected, 
+    isLeaf, 
+    type, 
+    level,
+    loading,
+    matched, // 搜索匹配标志
+    children = []
+  } = node;
+
+  const nodeTitle = title || name || '';
+  const hasChildren = Array.isArray(children) && children.length > 0;
+  const showSwitcher = !isLeaf;
+  
   // 处理展开/折叠
   const handleExpand = (e) => {
     e.stopPropagation();
@@ -41,10 +65,23 @@ const VirtualTreeNode = ({
 
   // 判断节点类型图标
   const renderIcon = () => {
+    if (loading) {
+      return <LoadingOutlined className="virtual-ant-tree-node-icon" />;
+    }
+    
     if (type === 'user') {
       return <UserOutlined className="virtual-ant-tree-node-icon node-icon-user" />;
     }
-    return <TeamOutlined className="virtual-ant-tree-node-icon node-icon-dept" />;
+    
+    if (isLeaf) {
+      return <TeamOutlined className="virtual-ant-tree-node-icon node-icon-dept" />;
+    }
+    
+    return expanded ? (
+      <TeamOutlined className="virtual-ant-tree-node-icon node-icon-dept-open" />
+    ) : (
+      <TeamOutlined className="virtual-ant-tree-node-icon node-icon-dept" />
+    );
   };
 
   // 计算内边距，用于表示层级
@@ -52,14 +89,14 @@ const VirtualTreeNode = ({
 
   // 高亮搜索结果
   const renderTitle = () => {
-    if (!searchValue) return title;
+    if (!searchValue) return nodeTitle;
     
-    const index = title.indexOf(searchValue);
-    if (index === -1) return title;
+    const index = nodeTitle.toLowerCase().indexOf(searchValue.toLowerCase());
+    if (index === -1) return nodeTitle;
     
-    const beforeStr = title.substring(0, index);
-    const middleStr = title.substring(index, index + searchValue.length);
-    const afterStr = title.substring(index + searchValue.length);
+    const beforeStr = nodeTitle.substring(0, index);
+    const middleStr = nodeTitle.substring(index, index + searchValue.length);
+    const afterStr = nodeTitle.substring(index + searchValue.length);
     
     return (
       <span>
@@ -76,23 +113,25 @@ const VirtualTreeNode = ({
         'virtual-ant-tree-node',
         { 'virtual-ant-tree-node-selected': selected },
         { 'virtual-ant-tree-node-user': type === 'user' },
-        { 'virtual-ant-tree-node-department': type !== 'user' }
+        { 'virtual-ant-tree-node-department': type !== 'user' },
+        { 'virtual-ant-tree-node-matched': matched || (searchValue && nodeTitle.toLowerCase().includes(searchValue.toLowerCase())) }
       )}
       style={{ paddingLeft }}
       onClick={handleSelect}
     >
-      {!isLeaf && (
+      {showSwitcher && (
         <span className="virtual-ant-tree-node-switcher" onClick={handleExpand}>
-          {expanded ? <CaretDownOutlined /> : <CaretRightOutlined />}
+          {loading ? <LoadingOutlined /> : expanded ? <CaretDownOutlined /> : <CaretRightOutlined />}
         </span>
       )}
-      {isLeaf && <span className="virtual-ant-tree-node-switcher-spacer"></span>}
+      {!showSwitcher && <span className="virtual-ant-tree-node-switcher-leaf"></span>}
       
       {checkable && (
         <Checkbox
           checked={checked}
           onChange={handleCheck}
           onClick={(e) => e.stopPropagation()}
+          className="virtual-ant-tree-checkbox"
         />
       )}
       
@@ -100,6 +139,6 @@ const VirtualTreeNode = ({
       <span className="virtual-ant-tree-node-title">{renderTitle()}</span>
     </div>
   );
-};
+});
 
 export default VirtualTreeNode; 
