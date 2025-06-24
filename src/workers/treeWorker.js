@@ -10,13 +10,22 @@ let visibilityCache = new Map();
 let flattenedData = [];
 const NODE_HEIGHT = 40; // 与主线程保持一致
 
+// 增加优先级处理标志
+let isProcessingHighPriority = false;
+
 /**
  * Worker主处理函数
  */
 self.onmessage = function(e) {
-  const { type } = e.data;
+  const { type, priority = 'normal' } = e.data;
+  
+  // 高优先级任务处理
+  if (priority === 'high') {
+    isProcessingHighPriority = true;
+  }
+  
   let flattenedData, scrollTop, viewportHeight, buffer, nodeId, expanded, searchTerm, updatedNodes;
-  let visibleNodes, totalHeight, matchResult;
+  let visibleNodes, totalHeight, visibleCount, matchResult;
 
   switch (type) {
     case 'initialize':
@@ -29,13 +38,27 @@ self.onmessage = function(e) {
       viewportHeight = e.data.viewportHeight;
       buffer = e.data.buffer;
       
-      ({ visibleNodes, totalHeight } = calculateVisibleNodes(
-        scrollTop,
-        viewportHeight,
-        NODE_HEIGHT,
-        buffer
-      ));
-      self.postMessage({ type: 'visibleNodesUpdated', visibleNodes, totalHeight });
+      // 使用高性能计算模式
+      if (priority === 'high' || !isProcessingHighPriority) {
+        const result = calculateVisibleNodes(
+          scrollTop,
+          viewportHeight,
+          NODE_HEIGHT,
+          buffer
+        );
+        
+        visibleNodes = result.visibleNodes;
+        totalHeight = result.totalHeight;
+        visibleCount = result.visibleCount;
+        
+        self.postMessage({ 
+          type: 'visibleNodesUpdated', 
+          visibleNodes, 
+          totalHeight,
+          visibleCount,
+          scrollTop // 返回请求时的滚动位置，便于UI判断是否仍然有效
+        });
+      }
       break;
 
     case 'toggleNode':
@@ -55,29 +78,100 @@ self.onmessage = function(e) {
       updateNodes(updatedNodes);
       break;
   }
+  
+  // 重置高优先级标志
+  if (priority === 'high') {
+    isProcessingHighPriority = false;
+  }
 };
 
 /**
  * 初始化Worker数据
  * @param {Array} data 扁平化的树节点数据
  */
-function initializeData(data) {
+function initializeData(flattenedData) {
+  console.time('worker:initialize');
   nodeMap.clear();
   visibilityCache.clear();
-  flattenedData = [...data];
 
-  // 构建节点索引Map
-  data.forEach(node => {
+  // 优化：批量处理初始数据
+  flattenedData.forEach(node => {
     nodeMap.set(node.id, node);
   });
 
-  // 计算初始可见节点和高度
+  console.timeEnd('worker:initialize');
+
+  // 计算初始可见节点和总高度
   const initialHeight = calculateTotalHeight();
+  
+  // 立即返回初始化成功消息和总高度
   self.postMessage({
     type: 'initialized',
     success: true,
-    totalHeight: initialHeight
+    totalHeight: initialHeight.totalHeight,
+    visibleCount: initialHeight.visibleCount
   });
+  
+  // 额外的优化：立即计算初始可见节点并返回，避免UI空白时间
+  const initialNodes = calculateInitialVisibleNodes();
+  
+  // 延迟一帧后发送初始可见节点，确保UI能立即响应初始化完成事件
+  setTimeout(() => {
+    self.postMessage({
+      type: 'visibleNodesUpdated',
+      visibleNodes: initialNodes.visibleNodes,
+      totalHeight: initialNodes.totalHeight,
+      visibleCount: initialNodes.visibleCount
+    });
+  }, 0);
+}
+
+/**
+ * 计算初始可见节点（无需滚动位置信息）
+ * @returns {Object} 可见节点和总高度
+ */
+function calculateInitialVisibleNodes() {
+  console.time('worker:initialVisibleNodes');
+  
+  const visibleNodes = [];
+  let accumulatedHeight = 0;
+  let currentIndex = 0;
+  
+  // 获取根节点和前几层可见节点
+  const maxInitialNodes = 20; // 限制初始返回的节点数量，避免传输过多数据
+  
+  for (const [id, node] of nodeMap.entries()) {
+    const isVisible = isNodeVisible(node);
+    
+    if (isVisible) {
+      const offsetTop = accumulatedHeight;
+      
+      // 只返回初始可见范围内的节点
+      if (currentIndex < maxInitialNodes) {
+        visibleNodes.push({
+          ...node,
+          offsetTop,
+          index: currentIndex
+        });
+      }
+      
+      accumulatedHeight += NODE_HEIGHT;
+      currentIndex++;
+      
+      // 达到最大初始节点数量时停止
+      if (currentIndex >= maxInitialNodes) {
+        break;
+      }
+    }
+  }
+  
+  console.timeEnd('worker:initialVisibleNodes');
+  
+  return {
+    visibleNodes,
+    totalHeight: accumulatedHeight,
+    visibleCount: currentIndex
+  };
 }
 
 /**

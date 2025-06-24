@@ -46,6 +46,23 @@
     font-weight: bold;
   }
 
+  &-node-matched-title {
+    color: #1677ff;
+    font-weight: 500;
+    position: relative;
+    
+    &::before {
+      content: '';
+      position: absolute;
+      left: -4px;
+      top: 0;
+      height: 100%;
+      width: 2px;
+      background-color: #1677ff;
+      border-radius: 1px;
+    }
+  }
+
   &-selected-count {
     position: absolute;
     bottom: 8px;

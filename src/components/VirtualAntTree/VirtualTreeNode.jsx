@@ -98,19 +98,27 @@ const VirtualTreeNode = memo(({
 
   // 高亮搜索结果
   const renderTitle = () => {
-    if (!searchValue) return nodeTitle;
+    if (!searchValue || !nodeTitle) return nodeTitle;
     
-    const index = nodeTitle.toLowerCase().indexOf(searchValue.toLowerCase());
-    if (index === -1) return nodeTitle;
+    const lowerNodeTitle = nodeTitle.toLowerCase();
+    const lowerSearchValue = searchValue.toLowerCase();
+    const index = lowerNodeTitle.indexOf(lowerSearchValue);
+    
+    if (index === -1) {
+      // 如果节点匹配但标题中没有匹配字符（比如匹配了email或position），仍然标记为匹配
+      return matched ? 
+        <span className="virtual-ant-tree-node-matched-title">{nodeTitle}</span> : 
+        nodeTitle;
+    }
     
     const beforeStr = nodeTitle.substring(0, index);
-    const middleStr = nodeTitle.substring(index, index + searchValue.length);
+    const matchedStr = nodeTitle.substring(index, index + searchValue.length);
     const afterStr = nodeTitle.substring(index + searchValue.length);
     
     return (
       <span>
         {beforeStr}
-        <span className="virtual-ant-tree-search-highlight">{middleStr}</span>
+        <span className="virtual-ant-tree-search-highlight">{matchedStr}</span>
         {afterStr}
       </span>
     );

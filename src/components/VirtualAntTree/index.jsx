@@ -6,7 +6,7 @@
  * @param {Number} props.height 容器高度
  * @param {Boolean} props.loading 加载状态
  */
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
 import { Spin, Input, Empty, Checkbox } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import VirtualTreeNode from './VirtualTreeNode';
@@ -621,97 +621,123 @@ const useTreeWorker = (options) => {
   const [workerReady, setWorkerReady] = useState(false);
   const [workerError, setWorkerError] = useState(null);
 
-  // 更新Worker中的可见节点
-  const updateVisibleNodes = useCallback((scrollPosition) => {
+  // 使用Worker更新可见节点
+  const workerUpdateVisibleNodes = useCallback((scrollTop, priority = 'normal') => {
     if (!workerRef.current || !workerReady) return;
-    
-    const buffer = Math.ceil(height / nodeHeight) * 2;
     
     workerRef.current.postMessage({
       type: 'updateVisibleNodes',
-      scrollTop: scrollPosition,
+      scrollTop,
       viewportHeight: height,
-      buffer
+      buffer: Math.ceil(height / NODE_HEIGHT) + 10,
+      priority
     });
-  }, [height, nodeHeight, workerReady]);
+  }, [height, workerReady]);
 
-  // Worker消息处理
+  // 使用Worker切换节点展开状态
+  const workerToggleNode = useCallback((nodeId, expanded) => {
+    if (!workerRef.current || !workerReady) return;
+    
+    workerRef.current.postMessage({
+      type: 'toggleNode',
+      nodeId,
+      expanded
+    });
+  }, [workerReady]);
+
+  // 使用Worker执行搜索
+  const workerSearch = useCallback((searchTerm) => {
+    if (!workerRef.current || !workerReady) return;
+    
+    workerRef.current.postMessage({
+      type: 'search',
+      searchTerm
+    });
+  }, [workerReady]);
+
+  // 监听loading属性变化
+  useEffect(() => {
+    setIsLoading(loading);
+    
+    // 当loading结束时，立即高优先级请求可见节点
+    if (!loading && workerReady && processedData) {
+      workerUpdateVisibleNodes(0, 'high');
+    }
+  }, [loading, workerReady, processedData, workerUpdateVisibleNodes]);
+
+  // 优化初始数据加载和处理
+  useEffect(() => {
+    if (!loading && treeData && treeData.length > 0 && processedData) {
+      // 数据已加载，立即进行初始处理
+      if (performanceMode && workerReady) {
+        // Worker已就绪，立即高优先级更新可见节点
+        workerUpdateVisibleNodes(scrollTop, 'high');
+      } else {
+        // 主线程处理，立即更新可见节点
+        updateVisibleNodesMainThread();
+      }
+    }
+  }, [loading, treeData, processedData, performanceMode, workerReady, scrollTop, updateVisibleNodesMainThread, workerUpdateVisibleNodes]);
+
+  // 处理Worker消息
   const handleWorkerMessage = useCallback((event) => {
     const { type, ...data } = event.data;
     
     switch (type) {
       case 'initialized':
         setWorkerReady(true);
-        if (data.totalHeight && options.onInitialized) {
-          options.onInitialized(data.totalHeight);
-        }
-        // 初始化完成后，请求可见节点
-        if (options.scrollTop !== undefined) {
-          updateVisibleNodes(options.scrollTop);
+        setTotalHeight(data.totalHeight || 0);
+        // 初始化后更新可见节点
+        if (containerRef.current) {
+          workerUpdateVisibleNodes(containerRef.current.scrollTop || 0, 'high');
         }
         break;
         
       case 'visibleNodesUpdated':
-        if (options.onVisibleNodesUpdated) {
-          options.onVisibleNodesUpdated(data.visibleNodes || [], data.totalHeight || 0);
-        }
+        setVisibleNodes(data.visibleNodes || []);
+        setTotalHeight(data.totalHeight || 0);
+        
         // 通知可见节点数量变化
-        if (onVisibleNodesChange && data.visibleNodes) {
-          onVisibleNodesChange(data.visibleNodes.length);
+        if (typeof onVisibleNodesChange === 'function') {
+          onVisibleNodesChange(data.visibleNodes?.length || 0);
         }
         break;
         
       case 'nodeToggled':
-        if (options.onNodeToggled) {
-          options.onNodeToggled(data.nodeId, data.expanded, data.totalHeight || 0);
+        setTotalHeight(data.totalHeight || 0);
+        // 更新节点展开状态
+        if (data.nodeId && processedDataRef.current?.nodeMap.has(data.nodeId)) {
+          const node = processedDataRef.current.nodeMap.get(data.nodeId);
+          node.expanded = data.expanded;
         }
-        // 更新可见节点
-        if (options.scrollTop !== undefined) {
-          updateVisibleNodes(options.scrollTop);
+        
+        // 更新expandedKeys
+        if (data.expanded) {
+          setExpandedKeys(prev => prev.includes(data.nodeId) ? prev : [...prev, data.nodeId]);
+        } else {
+          setExpandedKeys(prev => prev.filter(key => key !== data.nodeId));
         }
         break;
         
       case 'searchComplete':
-        if (options.onSearchComplete && data.matchResult) {
-          options.onSearchComplete(data.matchResult);
+        setSearchLoading(false);
+        // 搜索完成后更新展开键
+        if (data.expandedKeys && data.expandedKeys.length > 0) {
+          setExpandedKeys(prev => {
+            const merged = [...prev, ...data.expandedKeys];
+            return [...new Set(merged)]; // 去重
+          });
         }
-        
-        // 仅在特定条件下更新可见节点，避免过度刷新
-        // 1. 只有当搜索有明确结果时才更新
-        // 2. 当清除搜索时只更新一次
-        if (options.scrollTop !== undefined) {
-          // 使用节流函数避免过度刷新
-          const shouldUpdate = 
-            // 有明确的匹配结果
-            (data.matchResult && data.matchResult.matchCount > 0) || 
-            // 明确是清除搜索的操作（搜索结果为0且搜索词为空）
-            (data.matchResult && 
-             data.matchResult.matchCount === 0 && 
-             (!data.matchResult.searchTerm || data.matchResult.searchTerm === ''));
-          
-          if (shouldUpdate) {
-            // 使用requestAnimationFrame延迟更新，避免连续多次更新
-            requestAnimationFrame(() => {
-              updateVisibleNodes(options.scrollTop);
-            });
-          }
+        // 更新匹配的键
+        if (data.matchResult) {
+          setMatchedKeys(data.matchResult.matches || []);
         }
         break;
         
-      case 'nodesUpdated':
-        if (options.onNodesUpdated) {
-          options.onNodesUpdated(data.totalHeight || 0);
-        }
-        // 更新可见节点
-        if (options.scrollTop !== undefined) {
-          updateVisibleNodes(options.scrollTop);
-        }
-        break;
-      
       default:
-        console.warn('收到未知类型Worker消息:', type);
+        console.log('未处理的Worker消息类型:', type);
     }
-  }, [options, updateVisibleNodes, onVisibleNodesChange]);
+  }, [onVisibleNodesChange, workerUpdateVisibleNodes]);
 
   // 初始化Worker
   useEffect(() => {
@@ -791,7 +817,7 @@ const useTreeWorker = (options) => {
     }, [workerReady]),
     
     // 更新可见节点
-    updateVisibleNodes
+    workerUpdateVisibleNodes
   };
 
   return {
@@ -829,98 +855,149 @@ const VirtualAntTree = ({
   onVisibleNodesChange
 }) => {
   // 状态定义
+  const [isLoading, setIsLoading] = useState(loading);
   const [visibleNodes, setVisibleNodes] = useState([]);
+  const [expandedKeys, setExpandedKeys] = useState(defaultExpandedKeys || []);
+  const [checkedKeys, setCheckedKeys] = useState(defaultCheckedKeys || []);
+  const [selectedKeys, setSelectedKeys] = useState(defaultSelectedKeys || []);
+  const [matchedKeys, setMatchedKeys] = useState([]);
   const [searchValue, setSearchValue] = useState('');
+  const [searchLoading, setSearchLoading] = useState(false);
   const [scrollTop, setScrollTop] = useState(0);
   const [totalHeight, setTotalHeight] = useState(0);
-  const [expandedKeys, setExpandedKeys] = useState(defaultExpandedKeys);
-  const [selectedKeys, setSelectedKeys] = useState(defaultSelectedKeys);
-  const [checkedKeys, setCheckedKeys] = useState(defaultCheckedKeys);
-  const [isLoading, setIsLoading] = useState(loading);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [matchedKeys, setMatchedKeys] = useState([]);
   const [forceUpdate, setForceUpdate] = useState(0);
-
-  // Refs
+  
+  // Worker相关状态
+  const [workerReady, setWorkerReady] = useState(false);
+  const [workerError, setWorkerError] = useState(null);
+  
+  // ref定义
   const containerRef = useRef(null);
   const processedDataRef = useRef(null);
+  const searchTimerRef = useRef(null);
+  const workerRef = useRef(null);
   const lastSelectedNodeRef = useRef(null);
-  const searchTimerRef = useRef(null); // 用于debounce搜索
-
-  // 处理树数据
+  
+  // 处理TreeData
   const processedData = useMemo(() => {
-    if (!treeData || treeData.length === 0) return { 
-      flattenedData: [], 
-      nodeMap: new Map(), 
-      visibilityCache: new Map(),
-      expandedCount: 0 
-    };
-    
+    // 使用工具函数扁平化处理树数据
     const result = processTreeData(treeData, {
+      defaultExpandAll,
       defaultExpandedKeys: expandedKeys,
       defaultSelectedKeys: selectedKeys,
-      defaultCheckedKeys: checkedKeys,
-      defaultExpandAll
+      defaultCheckedKeys: checkedKeys
     });
     
+    // 保存处理结果到ref，以便在回调中访问
     processedDataRef.current = result;
     return result;
-  }, [treeData, expandedKeys.length, selectedKeys.length, checkedKeys.length, defaultExpandAll]);
-
-  // 监听loading属性变化
-  useEffect(() => {
-    setIsLoading(loading);
-  }, [loading]);
-
-  // 初始化Worker
-  const {
-    workerReady,
-    workerError,
-    toggleNode: workerToggleNode,
-    search: workerSearch,
-    updateNodes: workerUpdateNodes,
-    updateVisibleNodes: workerUpdateVisibleNodes
-  } = useTreeWorker({
-    performanceMode,
-    processedData,
-    height,
-    scrollTop,
-    onVisibleNodesChange,
-    onInitialized: (totalHeight) => {
-      setTotalHeight(totalHeight);
-    },
-    onVisibleNodesUpdated: (nodes, totalHeight) => {
-      setVisibleNodes(nodes);
-      setTotalHeight(totalHeight);
-    },
-    onNodeToggled: (nodeId, expanded, totalHeight) => {
-      setTotalHeight(totalHeight);
-      
-      // 更新节点展开状态
-      if (processedDataRef.current?.nodeMap.has(nodeId)) {
-        const node = processedDataRef.current.nodeMap.get(nodeId);
-        node.expanded = expanded;
-      }
-      
-      // 更新expandedKeys
-      if (expanded) {
-        setExpandedKeys(prev => prev.includes(nodeId) ? prev : [...prev, nodeId]);
-      } else {
-        setExpandedKeys(prev => prev.filter(key => key !== nodeId));
-      }
-    },
-    onSearchComplete: (result) => {
-      setMatchedKeys(result.matches || []);
-      setSearchLoading(false);
-    },
-    onNodesUpdated: (totalHeight) => {
-      setTotalHeight(totalHeight);
-    },
-    onWorkerError: (error) => {
-      console.error('Worker错误:', error);
+  }, [treeData, defaultExpandAll, expandedKeys, selectedKeys, checkedKeys]);
+  
+  // Worker相关函数
+  // 使用Worker更新可见节点
+  const workerUpdateVisibleNodes = useCallback((scrollTop, priority = 'normal') => {
+    if (!workerRef.current || !workerReady) return;
+    
+    workerRef.current.postMessage({
+      type: 'updateVisibleNodes',
+      scrollTop,
+      viewportHeight: height,
+      buffer: Math.ceil(height / NODE_HEIGHT) + 10,
+      priority
+    });
+  }, [height, workerReady]);
+  
+  // 使用Worker切换节点展开状态
+  const workerToggleNode = useCallback((nodeId, expanded) => {
+    if (!workerRef.current || !workerReady) return;
+    
+    workerRef.current.postMessage({
+      type: 'toggleNode',
+      nodeId,
+      expanded
+    });
+  }, [workerReady]);
+  
+  // 使用Worker执行搜索
+  const workerSearch = useCallback((searchTerm) => {
+    if (!workerRef.current || !workerReady) return;
+    
+    workerRef.current.postMessage({
+      type: 'search',
+      searchTerm
+    });
+  }, [workerReady]);
+  
+  // 更新Worker中的节点数据
+  const workerUpdateNodes = useCallback((nodes) => {
+    if (!workerRef.current || !workerReady) return;
+    
+    workerRef.current.postMessage({
+      type: 'updateNodes',
+      nodes: Array.isArray(nodes) ? nodes : [nodes]
+    });
+  }, [workerReady]);
+  
+  // 处理Worker消息
+  const handleWorkerMessage = useCallback((event) => {
+    const { type, ...data } = event.data;
+    
+    switch (type) {
+      case 'initialized':
+        setWorkerReady(true);
+        setTotalHeight(data.totalHeight || 0);
+        // 初始化后更新可见节点
+        if (containerRef.current) {
+          workerUpdateVisibleNodes(containerRef.current.scrollTop || 0, 'high');
+        }
+        break;
+        
+      case 'visibleNodesUpdated':
+        setVisibleNodes(data.visibleNodes || []);
+        setTotalHeight(data.totalHeight || 0);
+        
+        // 通知可见节点数量变化
+        if (typeof onVisibleNodesChange === 'function') {
+          onVisibleNodesChange(data.visibleNodes?.length || 0);
+        }
+        break;
+        
+      case 'nodeToggled':
+        setTotalHeight(data.totalHeight || 0);
+        // 更新节点展开状态
+        if (data.nodeId && processedDataRef.current?.nodeMap.has(data.nodeId)) {
+          const node = processedDataRef.current.nodeMap.get(data.nodeId);
+          node.expanded = data.expanded;
+        }
+        
+        // 更新expandedKeys
+        if (data.expanded) {
+          setExpandedKeys(prev => prev.includes(data.nodeId) ? prev : [...prev, data.nodeId]);
+        } else {
+          setExpandedKeys(prev => prev.filter(key => key !== data.nodeId));
+        }
+        break;
+        
+      case 'searchComplete':
+        setSearchLoading(false);
+        // 搜索完成后更新展开键
+        if (data.expandedKeys && data.expandedKeys.length > 0) {
+          setExpandedKeys(prev => {
+            const merged = [...prev, ...data.expandedKeys];
+            return [...new Set(merged)]; // 去重
+          });
+        }
+        // 更新匹配的键
+        if (data.matchResult) {
+          setMatchedKeys(data.matchResult.matches || []);
+        }
+        break;
+        
+      default:
+        console.log('未处理的Worker消息类型:', type);
     }
-  });
-
+  }, [onVisibleNodesChange, workerUpdateVisibleNodes]);
+  
   // 主线程更新可见节点
   const updateVisibleNodesMainThread = useCallback(() => {
     const { flattenedData, visibilityCache } = processedDataRef.current || processedData;
@@ -957,6 +1034,57 @@ const VirtualAntTree = ({
       setVisibleNodes(nodes);
     }
   }, [performanceMode, height, workerError, workerReady, workerUpdateVisibleNodes]);
+  
+  // 初始化Worker
+  useEffect(() => {
+    if (!performanceMode) return;
+    
+    try {
+      // 创建Worker
+      const worker = createTreeWorker();
+      
+      if (worker) {
+        workerRef.current = worker;
+        
+        // 设置Worker消息处理
+        worker.onmessage = handleWorkerMessage;
+        worker.onerror = (error) => {
+          console.error('Worker错误:', error);
+          setWorkerError(error);
+          setWorkerReady(false);
+        };
+        
+        // 初始化Worker数据
+        if (processedData && processedData.flattenedData && processedData.flattenedData.length > 0) {
+          worker.postMessage({
+            type: 'initialize',
+            flattenedData: processedData.flattenedData
+          });
+        }
+      }
+    } catch (error) {
+      console.error('初始化Worker失败:', error);
+      setWorkerError(error);
+    }
+    
+    // 组件销毁时终止Worker
+    return () => {
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
+    };
+  }, [performanceMode, processedData, handleWorkerMessage]);
+  
+  // 监听loading属性变化
+  useEffect(() => {
+    setIsLoading(loading);
+    
+    // 当loading结束时，立即高优先级请求可见节点
+    if (!loading && workerReady && processedData) {
+      workerUpdateVisibleNodes(0, 'high');
+    }
+  }, [loading, workerReady, processedData, workerUpdateVisibleNodes]);
   
   // 处理滚动事件
   const handleScroll = useCallback((e) => {
@@ -1002,6 +1130,7 @@ const VirtualAntTree = ({
     
     // 使用Worker处理或主线程处理
     if (performanceMode && !workerError && workerReady) {
+      // 使用Worker处理展开/折叠
       workerToggleNode(nodeId, newExpandedState);
     } else {
       // 主线程处理展开/折叠
@@ -1268,51 +1397,36 @@ const VirtualAntTree = ({
     const node = processedDataRef.current?.nodeMap.get(nodeId);
     if (!node) return;
     
+    // 获取需要处理的节点集合
+    const nodesToProcess = new Set([nodeId]);
+    
+    // 如果有子节点，添加所有子节点
+    if (node.children && node.children.length > 0 && processedDataRef.current) {
+      const childrenKeys = getChildrenKeys(processedDataRef.current.flattenedData, nodeId);
+      childrenKeys.forEach(key => nodesToProcess.add(key));
+    }
+    
     // 更新选中状态
     setCheckedKeys(prev => {
-      let newCheckedKeys;
+      let newCheckedKeys = [...prev];
       
       if (checked) {
-        // 选中节点
-        newCheckedKeys = [...prev, nodeId];
+        // 添加所有需要选中的节点
+        nodesToProcess.forEach(id => {
+          if (!newCheckedKeys.includes(id)) {
+            newCheckedKeys.push(id);
+          }
+        });
       } else {
-        // 取消选中
-        newCheckedKeys = prev.filter(id => id !== nodeId);
+        // 移除所有需要取消选中的节点
+        newCheckedKeys = newCheckedKeys.filter(id => !nodesToProcess.has(id));
       }
       
-      // 处理级联选择
-      if (node.children && node.children.length > 0) {
-        // 如果有子节点，递归处理子节点
-        const childrenKeys = getChildrenKeys(processedDataRef.current.flattenedData, nodeId);
-        
-        if (checked) {
-          // 选中所有子节点
-          childrenKeys.forEach(key => {
-            if (!newCheckedKeys.includes(key)) {
-              newCheckedKeys.push(key);
-            }
-          });
-        } else {
-          // 取消选中所有子节点
-          newCheckedKeys = newCheckedKeys.filter(key => !childrenKeys.includes(key));
-        }
-      }
-      
-      // 处理父节点选中状态
-      if (node.parentId) {
-        updateParentCheckedState(
-          processedDataRef.current.flattenedData, 
-          processedDataRef.current.nodeMap, 
-          nodeId, 
-          newCheckedKeys
-        );
-      }
-      
-      // 触发回调
-      if (onCheck) {
-        const checkedNodes = newCheckedKeys.map(key => 
-          processedDataRef.current?.nodeMap.get(key)
-        ).filter(Boolean);
+      // 触发回调，但不在这里直接修改父节点状态
+      if (onCheck && processedDataRef.current) {
+        const checkedNodes = newCheckedKeys
+          .map(key => processedDataRef.current.nodeMap.get(key))
+          .filter(Boolean);
         
         onCheck(newCheckedKeys, {
           checked,
@@ -1326,16 +1440,57 @@ const VirtualAntTree = ({
       return newCheckedKeys;
     });
     
-    // 更新节点状态
+    // 标记当前节点状态变更，后续通过Effect处理级联效果
     if (node) {
       node.checked = checked;
       
-      // 如果有Worker，通知更新节点
-      if (performanceMode && !workerError && workerReady) {
-        workerUpdateNodes([node]);
+      // 延迟处理Worker更新，避免在渲染期间调用
+      requestAnimationFrame(() => {
+        if (performanceMode && !workerError && workerReady && processedDataRef.current) {
+          const nodesToUpdate = [node];
+          workerUpdateNodes(nodesToUpdate);
+        }
+      });
+    }
+  }, [checkable, getChildrenKeys, onCheck, performanceMode, workerError, workerReady, workerUpdateNodes]);
+
+  // 使用Effect处理复选框级联状态更新
+  useEffect(() => {
+    // 仅当复选框状态变更时处理
+    if (!checkable || !processedDataRef.current) return;
+    
+    const { flattenedData, nodeMap } = processedDataRef.current;
+    
+    // 1. 计算所有节点的indeterminate状态
+    flattenedData.forEach(node => {
+      if (!node.children || node.children.length === 0) return;
+      
+      const allChildren = node.children;
+      const checkedChildren = allChildren.filter(childId => checkedKeys.includes(childId));
+      
+      // 更新部分选中状态
+      if (checkedChildren.length > 0 && checkedChildren.length < allChildren.length) {
+        node.indeterminate = true;
+      } else {
+        node.indeterminate = false;
+      }
+    });
+    
+    // 2. 更新Worker
+    if (performanceMode && !workerError && workerReady) {
+      // 收集所有需要更新的节点
+      const indeterminateNodes = flattenedData.filter(node => node.indeterminate);
+      if (indeterminateNodes.length > 0) {
+        requestAnimationFrame(() => {
+          workerUpdateNodes(indeterminateNodes);
+        });
       }
     }
-  }, [checkable, performanceMode, workerError, workerReady, workerUpdateNodes, onCheck]);
+    
+    // 3. 强制更新视图
+    setForceUpdate(prev => prev + 1);
+    
+  }, [checkable, checkedKeys, performanceMode, workerError, workerReady, workerUpdateNodes]);
 
   // 渲染虚拟节点
   const renderVirtualNode = (node) => {

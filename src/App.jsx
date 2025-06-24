@@ -39,55 +39,60 @@ function App() {
   };
 
   // 处理复选框选择
-  const handleCheck = (keys, info) => {
+  const handleCheck = useCallback((keys, info) => {
     console.log('handleCheck 被调用，选中的keys:', keys, '节点信息:', info);
     
     // 使用Set避免重复key
     const uniqueKeys = Array.from(new Set(keys));
-    setCheckedKeys(uniqueKeys);
     
-    // 保存选中的节点信息
-    if (info && info.checkedNodes) {
-      // 收集所有用户节点，包括部门中的用户
-      let allUserNodes = [];
+    // 使用setTimeout避免在渲染期间更新状态
+    setTimeout(() => {
+      // 设置选中的keys
+      setCheckedKeys(uniqueKeys);
       
-      // 直接从完整的flattenedData中查找所有被选中的用户节点
-      if (info.checkedNodes[0]?.flattenedData) {
-        const flattenedData = info.checkedNodes[0].flattenedData;
-        const userNodes = flattenedData.filter(
-          node => node.type === 'user' && uniqueKeys.includes(node.key)
-        );
-        allUserNodes = [...userNodes];
-      } else {
-        // 处理直接选中的节点
-        const directUserNodes = info.checkedNodes.filter(node => node && node.type === 'user');
-        allUserNodes = [...directUserNodes];
+      // 保存选中的节点信息
+      if (info && info.checkedNodes) {
+        // 收集所有用户节点，包括部门中的用户
+        let allUserNodes = [];
         
-        // 处理部门节点
-        const departmentNodes = info.checkedNodes.filter(node => node && node.type === 'department');
-        departmentNodes.forEach(dept => {
-          // 找出该部门下所有选中的用户节点
-          if (dept && dept.children) {
-            const deptUserNodes = dept.children.filter(node => node && node.type === 'user');
-            allUserNodes = [...allUserNodes, ...deptUserNodes];
+        // 直接从完整的flattenedData中查找所有被选中的用户节点
+        if (info.checkedNodes[0]?.flattenedData) {
+          const flattenedData = info.checkedNodes[0].flattenedData;
+          const userNodes = flattenedData.filter(
+            node => node.type === 'user' && uniqueKeys.includes(node.key)
+          );
+          allUserNodes = [...userNodes];
+        } else {
+          // 处理直接选中的节点
+          const directUserNodes = info.checkedNodes.filter(node => node && node.type === 'user');
+          allUserNodes = [...directUserNodes];
+          
+          // 处理部门节点
+          const departmentNodes = info.checkedNodes.filter(node => node && node.type === 'department');
+          departmentNodes.forEach(dept => {
+            // 找出该部门下所有选中的用户节点
+            if (dept && dept.children) {
+              const deptUserNodes = dept.children.filter(node => node && node.type === 'user');
+              allUserNodes = [...allUserNodes, ...deptUserNodes];
+            }
+          });
+        }
+        
+        // 使用Map进行去重，保证节点按key唯一
+        const uniqueNodesMap = new Map();
+        allUserNodes.forEach(node => {
+          if (node && node.key && !uniqueNodesMap.has(node.key)) {
+            uniqueNodesMap.set(node.key, node);
           }
         });
+        
+        // 转换回数组
+        const uniqueUserNodes = Array.from(uniqueNodesMap.values());
+        console.log(`处理后的选中用户节点数量: ${uniqueUserNodes.length}`);
+        setCheckedNodes(uniqueUserNodes);
       }
-      
-      // 使用Map进行去重，保证节点按key唯一
-      const uniqueNodesMap = new Map();
-      allUserNodes.forEach(node => {
-        if (node && node.key && !uniqueNodesMap.has(node.key)) {
-          uniqueNodesMap.set(node.key, node);
-        }
-      });
-      
-      // 转换回数组
-      const uniqueUserNodes = Array.from(uniqueNodesMap.values());
-      console.log(`处理后的选中用户节点数量: ${uniqueUserNodes.length}`);
-      setCheckedNodes(uniqueUserNodes);
-    }
-  };
+    }, 0);
+  }, []);
 
   // 显示会议邀请模态框
   const showMeetingModal = () => {
