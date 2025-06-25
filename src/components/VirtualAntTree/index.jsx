@@ -1092,7 +1092,7 @@ const VirtualAntTree = ({
   const [scrollTop, setScrollTop] = useState(0);
   const [totalHeight, setTotalHeight] = useState(0);
   const [forceUpdate, setForceUpdate] = useState(0);
-  
+
   // Worker相关状态
   const [workerReady, setWorkerReady] = useState(false);
   const [workerError, setWorkerError] = useState(null);
@@ -1103,7 +1103,7 @@ const VirtualAntTree = ({
   const searchTimerRef = useRef(null);
   const workerRef = useRef(null);
   const lastSelectedNodeRef = useRef(null);
-  
+
   // 处理TreeData
   const processedData = useMemo(() => {
     // 使用工具函数扁平化处理树数据
@@ -1264,7 +1264,7 @@ const VirtualAntTree = ({
   // 初始化Worker
   useEffect(() => {
     if (!performanceMode) return;
-    
+
     try {
       // 创建Worker
       const worker = createTreeWorker();
@@ -1395,7 +1395,7 @@ const VirtualAntTree = ({
     
     if (value) {
       setSearchLoading(true);
-    } else {
+            } else {
       setSearchLoading(false);
     }
     
@@ -1409,7 +1409,7 @@ const VirtualAntTree = ({
       const searchAction = () => {
         if (performanceMode && !workerError && workerReady) {
           workerSearch(value);
-        } else {
+            } else {
           // 主线程处理搜索
           if (processedDataRef.current) {
             const { flattenedData, visibilityCache } = processedDataRef.current;
@@ -1471,25 +1471,25 @@ const VirtualAntTree = ({
             visibilityCache.clear();
             
             // 计算新的可见节点
-            const vNodes = getVisibleNodes(flattenedData, { 
-              expandedKeys,
-              visibilityCache 
-            });
-            
+          const vNodes = getVisibleNodes(flattenedData, { 
+            expandedKeys,
+            visibilityCache
+          });
+          
             // 更新高度
             setTotalHeight(vNodes.length * NODE_HEIGHT);
             
             // 更新视图内节点
             if (containerRef.current) {
-              const nodes = getNodesInViewport(vNodes, {
+          const nodes = getNodesInViewport(vNodes, {
                 scrollTop: containerRef.current.scrollTop || 0,
-                viewportHeight: height,
-                nodeHeight: NODE_HEIGHT,
-                overscan: 10
-              });
-              
-              setVisibleNodes(nodes);
-            }
+            viewportHeight: height,
+            nodeHeight: NODE_HEIGHT,
+            overscan: 10
+          });
+          
+          setVisibleNodes(nodes);
+        }
             
             // 更新搜索状态
             setSearchLoading(false);
@@ -1576,7 +1576,7 @@ const VirtualAntTree = ({
         // 强制更新视图
         if (performanceMode && !workerError && workerReady) {
           workerUpdateVisibleNodes(scrollTop);
-        } else {
+    } else {
           // 主线程处理
           updateVisibleNodesMainThread();
         }
@@ -1590,24 +1590,24 @@ const VirtualAntTree = ({
     if (!node) return;
 
     // 更新选中状态
-    if (multiple) {
-      // 多选模式
-      setSelectedKeys(prev => {
+      if (multiple) {
+        // 多选模式
+        setSelectedKeys(prev => {
         const isSelected = prev.includes(nodeId);
         if (isSelected) {
           // 如果已选中，则移除
           const result = prev.filter(id => id !== nodeId);
           onSelect && onSelect(result, { selected: false, nodeIds: [nodeId], node });
           return result;
-        } else {
+          } else {
           // 如果未选中，则添加
           const result = [...prev, nodeId];
           onSelect && onSelect(result, { selected: true, nodeIds: [nodeId], node });
           return result;
-        }
-      });
-    } else {
-      // 单选模式
+          }
+        });
+      } else {
+        // 单选模式
       setSelectedKeys([nodeId]);
       onSelect && onSelect([nodeId], { node, selected: true });
     }
@@ -1637,8 +1637,8 @@ const VirtualAntTree = ({
       // 批量更新状态
       setCheckedKeys(prev => {
         let newCheckedKeys;
-        
-        if (checked) {
+      
+      if (checked) {
           // 使用Set合并去重，提高性能
           const uniqueKeys = new Set([...prev]);
           nodesToProcess.forEach(id => uniqueKeys.add(id));
@@ -1681,8 +1681,8 @@ const VirtualAntTree = ({
             workerRef.current?.postMessage({
               type: 'batchUpdate',
               nodeIds: Array.from(nodesToProcess),
-              checked
-            });
+          checked
+        });
           } else {
             // 对于少量节点，使用常规更新
             const nodesToUpdate = Array.from(nodesToProcess)
@@ -1714,7 +1714,7 @@ const VirtualAntTree = ({
     const { flattenedData, nodeMap } = processedDataRef.current;
     
     // 1. 计算所有节点的indeterminate状态
-    flattenedData.forEach(node => {
+        flattenedData.forEach(node => {
       if (!node.children || node.children.length === 0) return;
       
       const allChildren = node.children;
@@ -1723,7 +1723,7 @@ const VirtualAntTree = ({
       // 更新部分选中状态
       if (checkedChildren.length > 0 && checkedChildren.length < allChildren.length) {
         node.indeterminate = true;
-      } else {
+              } else {
         node.indeterminate = false;
       }
     });

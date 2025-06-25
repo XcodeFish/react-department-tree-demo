@@ -59,7 +59,7 @@ self.onmessage = function(e) {
   // 高优先级消息直接处理，其他消息进入队列
   if (e.data.priority === 'high') {
     handleWorkerMessage(e);
-  } else {
+    } else {
     // 根据消息类型设置优先级
     let priority = 0;
     switch (e.data.type) {
@@ -388,7 +388,7 @@ function calculateVisibleNodes(scrollTop, viewportHeight, nodeHeight, buffer) {
   }
 
   return {
-    visibleNodes,
+          visibleNodes,
     totalHeight: accumulatedHeight,
     visibleCount
   };
