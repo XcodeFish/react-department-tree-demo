@@ -1,0 +1,212 @@
+/**
+ * VirtualAntTree 组件样式
+ * 优化大数据量树组件的渲染性能
+ */
+
+/* 容器样式 */
+.virtual-ant-tree-container {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  contain: content;
+}
+
+/* 搜索框容器 */
+.virtual-ant-tree-search {
+  margin-bottom: 8px;
+  position: relative;
+  z-index: 2;
+}
+
+/* 加载状态 */
+.virtual-ant-tree-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  width: 100%;
+}
+
+/* 树内容区域 */
+.virtual-ant-tree-content {
+  position: relative;
+  overflow: auto;
+  border: 1px solid #f0f0f0;
+  border-radius: 2px;
+  will-change: transform;
+  contain: strict;
+}
+
+/* 高度占位容器 */
+.virtual-ant-tree-height-holder {
+  position: relative;
+  width: 100%;
+  contain: size layout;
+}
+
+/* 节点容器 */
+.virtual-ant-tree-node-container {
+  position: absolute;
+  left: 0;
+  right: 0;
+  width: 100%;
+  contain: content;
+  will-change: transform;
+  /* 使用transform代替top定位，启用GPU加速 */
+  transform: translateY(var(--node-top, 0));
+}
+
+/* 节点样式 */
+.virtual-ant-tree-node {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 8px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  contain: content;
+}
+
+.virtual-ant-tree-node:hover {
+  background-color: #f5f5f5;
+}
+
+.virtual-ant-tree-node-selected {
+  background-color: #e6f7ff;
+}
+
+.virtual-ant-tree-node-checked {
+  background-color: #e6f7ff;
+}
+
+/* 展开/折叠图标 */
+.virtual-ant-tree-node-switcher {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 4px;
+  cursor: pointer;
+}
+
+/* 节点图标 */
+.virtual-ant-tree-node-icon {
+  margin-right: 8px;
+  font-size: 14px;
+}
+
+/* 节点标题 */
+.virtual-ant-tree-node-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 匹配高亮 */
+.virtual-ant-tree-node-title-highlight {
+  color: #1890ff;
+  font-weight: 500;
+}
+
+/* 节点位置信息 */
+.virtual-ant-tree-node-position {
+  margin-left: 8px;
+  color: #999;
+  font-size: 12px;
+}
+
+/* 用户节点样式 */
+.virtual-ant-tree-node-user {
+  color: #333;
+}
+
+/* 部门节点样式 */
+.virtual-ant-tree-node-department {
+  font-weight: 500;
+}
+
+/* 复选框样式 */
+.virtual-ant-tree-node-checkbox {
+  margin-right: 8px;
+}
+
+/* 空状态 */
+.virtual-ant-tree-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: #999;
+}
+
+/* 搜索指示器 */
+.virtual-ant-tree-search-indicator {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(255, 255, 255, 0.8);
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  z-index: 3;
+}
+
+/* 已选计数器 */
+.virtual-ant-tree-selected-count {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  background: #1890ff;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  z-index: 3;
+}
+
+/* 性能优化相关样式 */
+/* 使用contain属性限制布局和绘制范围 */
+.virtual-ant-tree-node {
+  contain: layout style;
+}
+
+/* 使用CSS变量动态设置节点位置 */
+.virtual-ant-tree-node-container {
+  transform: translateY(var(--offset-top, 0));
+  will-change: transform;
+}
+
+/* 启用GPU加速 */
+.virtual-ant-tree-content {
+  -webkit-overflow-scrolling: touch;
+  transform: translateZ(0);
+}
+
+/* 优化滚动性能 */
+@media (pointer: fine) {
+  .virtual-ant-tree-content {
+    scroll-behavior: smooth;
+  }
+}
+
+/* 滚动中的样式优化 */
+.virtual-ant-tree-scrolling .virtual-ant-tree-node-container {
+  pointer-events: none;
+}
+
+/* 减少重绘区域 */
+.virtual-ant-tree-node-container {
+  contain: layout style;
+}
+
+/* 优化大量节点渲染性能 */
+@supports (content-visibility: auto) {
+  .virtual-ant-tree-node-container {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 40px;
+  }
+} 

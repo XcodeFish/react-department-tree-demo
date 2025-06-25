@@ -1,199 +1,183 @@
 /**
  * 虚拟树节点组件
- * 用于渲染单个树节点，支持展开/折叠、选择、复选等功能
- * @param {Object} props 组件属性
+ * 使用React.memo和useMemo优化渲染性能
  */
-import React, { memo } from 'react';
-import { CaretDownOutlined, CaretRightOutlined, TeamOutlined, UserOutlined, LoadingOutlined, CheckOutlined } from '@ant-design/icons';
+import React, { memo, useMemo, useCallback } from 'react';
+import { CaretDownOutlined, CaretRightOutlined, LoadingOutlined, FileOutlined, FolderOutlined, FolderOpenOutlined, UserOutlined, TeamOutlined } from '@ant-design/icons';
+import { Avatar, Checkbox } from 'antd';
 import classNames from 'classnames';
 
-const VirtualTreeNode = memo(({
-  node,
-  checkable = false,
-  multiple = false,
-  searchValue = '',
-  onExpand,
-  onCheck,
-  onSelect,
-  showIcon = true,
-  showLine = false,
-  blockNode = true,
-  selectable = true
-}) => {
-  if (!node) return null;
+/**
+ * 虚拟树节点组件
+ * 使用React.memo和useMemo优化渲染性能
+ */
+const VirtualTreeNode = memo(function VirtualTreeNode(props) {
+  // 提取所有props
+  const {
+    node = null,
+    onToggle = () => {},
+    onSelect = () => {},
+    onCheck = () => {},
+    checkable = false,
+    selectable = true,
+    showIcon = true,
+    showLine = false,
+    blockNode = true,
+    style = {}
+  } = props;
 
-  const { 
-    key,
-    title, 
-    name, 
-    expanded, 
-    checked, 
-    selected, 
-    indeterminate, 
-    isLeaf, 
-    type, 
-    level,
-    loading = false,
-    matched,
-    children = [],
-    realName,
-    position
-  } = node;
-  
-  // 构建显示文本
-  const nodeTitle = type === 'user' ? 
-    (realName ? `${realName}${position ? ` - ${position}` : ''}` : name) : 
-    (title || name || '');
-  
+  // 从节点中提取属性，使用默认值确保安全
+  const nodeId = node?.id || '';
+  const nodeKey = node?.key || nodeId;
+  const name = node?.name || '';
+  const title = node?.title || name;
+  const level = node?.level || 0;
+  const expanded = node?.expanded || false;
+  const children = node?.children || [];
+  const loading = node?.loading || false;
+  const matched = node?.matched || false;
+  const selected = node?.selected || false;
+  const checked = node?.checked || false;
+  const indeterminate = node?.indeterminate || false;
+  const isLeaf = node?.isLeaf || false;
+  const type = node?.type || 'department';
+  const avatar = node?.avatar || '';
+  const position = node?.position || '';
+
+  // 派生状态
+  const isUser = type === 'user';
+  const hasChildren = Array.isArray(children) && children.length > 0;
   const showSwitcher = !isLeaf;
+  const isChecked = !!checked;
+  const isIndeterminate = !!indeterminate;
   
+  // 所有Hooks在顶层调用
   // 处理展开/折叠
-  const handleExpand = (e) => {
+  const handleExpand = useCallback((e) => {
     e.stopPropagation();
-    if (onExpand) {
-      onExpand(key, !expanded);
+    if (onToggle && nodeKey) {
+      onToggle(nodeKey);
     }
-  };
+  }, [nodeKey, onToggle]);
 
   // 处理选择
-  const handleSelect = (e) => {
+  const handleSelect = useCallback((e) => {
     e.stopPropagation();
-    
-    // 同时触发勾选
-    if (checkable && onCheck) {
-      onCheck(key, !checked);
+    if (selectable && onSelect && nodeKey) {
+      onSelect(nodeKey);
     }
-    
-    // 处理选择
-    if (onSelect && selectable) {
-      onSelect(key, !selected);
-    }
-  };
+  }, [nodeKey, selectable, onSelect]);
 
   // 处理复选框
-  const handleCheck = (e) => {
+  const handleCheck = useCallback((e) => {
     e.stopPropagation();
-    if (onCheck) {
-      onCheck(key, !checked);
+    if (checkable && onCheck && nodeKey) {
+      onCheck(nodeKey, e.target.checked);
     }
-  };
+  }, [nodeKey, checkable, onCheck]);
 
-  // 渲染图标
-  const renderIcon = () => {
+  // 节点图标
+  const nodeIcon = useMemo(() => {
     if (!showIcon) return null;
     
     if (loading) {
       return <LoadingOutlined className="virtual-ant-tree-node-icon" />;
     }
-    
-    if (type === 'user') {
-      return <UserOutlined className="virtual-ant-tree-node-icon" />;
+
+    if (isUser) {
+      return avatar ? 
+        <Avatar size="small" src={avatar} className="virtual-ant-tree-node-icon" /> : 
+        <UserOutlined className="virtual-ant-tree-node-icon" />;
+    }
+
+    if (expanded) {
+      return <FolderOpenOutlined className="virtual-ant-tree-node-icon" />;
     }
     
-    return <TeamOutlined className="virtual-ant-tree-node-icon" />;
-  };
+    return <FolderOutlined className="virtual-ant-tree-node-icon" />;
+  }, [showIcon, loading, isUser, avatar, expanded]);
 
-  // 计算内边距
-  const paddingLeft = level * 24;
+  // 节点类名
+  const nodeClassNames = useMemo(() => classNames(
+    'virtual-ant-tree-node',
+    { 'virtual-ant-tree-node-selected': selected },
+    { 'virtual-ant-tree-node-checked': isChecked }, 
+    { 'virtual-ant-tree-node-indeterminate': isIndeterminate }, 
+    { 'virtual-ant-tree-node-user': isUser },
+    { 'virtual-ant-tree-node-department': !isUser }
+  ), [selected, isChecked, isIndeterminate, isUser]);
 
-  // 高亮搜索结果
-  const renderTitle = () => {
-    if (!searchValue || !nodeTitle) return nodeTitle;
+  // 展开图标类名
+  const switcherClassNames = useMemo(() => classNames('virtual-ant-tree-node-switcher', {
+    'virtual-ant-tree-node-switcher_open': expanded && showSwitcher,
+    'virtual-ant-tree-node-switcher_close': !expanded && showSwitcher,
+    'virtual-ant-tree-node-switcher-noop': !showSwitcher
+  }), [expanded, showSwitcher]);
+
+  // 标题类名
+  const titleClassNames = useMemo(() => classNames('virtual-ant-tree-node-title', {
+    'virtual-ant-tree-node-title-matched': matched
+  }), [matched]);
+
+  // 容器样式
+  const containerStyle = useMemo(() => ({
+    paddingLeft: level * 24,
+    contain: 'content',
+    ...style
+  }), [level, style]);
+
+  // 显示名称
+  const displayName = useMemo(() => {
+    const text = title || name || '';
     
-    const lowerNodeTitle = nodeTitle.toLowerCase();
-    const lowerSearchValue = searchValue.toLowerCase();
-    const index = lowerNodeTitle.indexOf(lowerSearchValue);
-    
-    if (index === -1) {
-      // 如果节点匹配但标题中没有匹配字符（比如匹配了email或position），仍然标记为匹配
-      return matched ? 
-        <span className="virtual-ant-tree-node-matched-title">{nodeTitle}</span> : 
-        nodeTitle;
+    if (matched) {
+      return <span className="virtual-ant-tree-node-title-highlight">{text}</span>;
     }
     
-    const beforeStr = nodeTitle.substring(0, index);
-    const matchedStr = nodeTitle.substring(index, index + searchValue.length);
-    const afterStr = nodeTitle.substring(index + searchValue.length);
-    
-    return (
-      <span>
-        {beforeStr}
-        <span className="virtual-ant-tree-search-highlight">{matchedStr}</span>
-        {afterStr}
-      </span>
-    );
-  };
+    return text;
+  }, [title, name, matched]);
   
-  // 确保值是布尔类型
-  const isChecked = !!checked;
-  const isIndeterminate = !!indeterminate;
-  
-  // 注释掉调试日志，避免大量输出导致性能问题
-  // if (type === 'department') {
-  //   console.log(`渲染部门节点: ${nodeTitle} (${key}), checked=${isChecked}, indeterminate=${isIndeterminate}`);
-  // }
+  // 如果没有节点，返回空div以保持结构完整
+  if (!node) {
+    return <div className="virtual-ant-tree-node-empty" style={style}></div>;
+  }
 
+  // 渲染节点
   return (
     <div
-      className={classNames(
-        'virtual-ant-tree-node',
-        { 'virtual-ant-tree-node-selected': selected },
-        { 'virtual-ant-tree-node-checked': isChecked }, 
-        { 'virtual-ant-tree-node-indeterminate': isIndeterminate }, 
-        { 'virtual-ant-tree-node-user': type === 'user' },
-        { 'virtual-ant-tree-node-department': type !== 'user' }
-      )}
-      style={{ paddingLeft }}
+      className={nodeClassNames}
+      style={containerStyle}
       onClick={handleSelect}
+      data-node-id={nodeKey}
     >
+      {/* 展开/折叠图标 */}
       {showSwitcher && (
-        <span className="virtual-ant-tree-node-switcher" onClick={handleExpand}>
+        <span className={switcherClassNames} onClick={handleExpand}>
           {loading ? <LoadingOutlined /> : expanded ? <CaretDownOutlined /> : <CaretRightOutlined />}
         </span>
       )}
-      {!showSwitcher && <span className="virtual-ant-tree-node-switcher-leaf"></span>}
       
+      {/* 复选框 */}
       {checkable && (
-        <div 
-          onClick={handleCheck}
-          className={classNames({
-            'virtual-ant-tree-checkbox': true,
-            'virtual-ant-tree-checkbox-checked': isChecked,
-            'virtual-ant-tree-checkbox-indeterminate': isIndeterminate && !isChecked
-          })}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: '16px',
-            height: '16px',
-            marginRight: '8px',
-            border: '1px solid #d9d9d9',
-            borderRadius: '2px',
-            backgroundColor: isChecked ? '#1890ff' : '#fff',
-            cursor: 'pointer',
-            position: 'relative',
-          }}
-        >
-          {isChecked && <CheckOutlined style={{ color: '#fff', fontSize: '12px' }} />}
-          {isIndeterminate && !isChecked && (
-            <div 
-              style={{
-                position: 'absolute',
-                top: '50%',
-                left: '20%',
-                width: '10px',
-                height: '2px',
-                backgroundColor: '#1890ff',
-                transform: 'translateY(-50%)'
-              }}
-            />
-          )}
-        </div>
+        <Checkbox
+          checked={isChecked}
+          indeterminate={isIndeterminate}
+          onChange={handleCheck}
+          onClick={e => e.stopPropagation()}
+          className="virtual-ant-tree-node-checkbox"
+        />
       )}
       
-      {renderIcon()}
-      <span className="virtual-ant-tree-node-title">{renderTitle()}</span>
+      {/* 节点图标 */}
+      {nodeIcon}
+      
+      {/* 节点标题 */}
+      <span className={titleClassNames}>{displayName}</span>
+      
+      {/* 附加信息 */}
+      {isUser && position && (
+        <span className="virtual-ant-tree-node-position">{position}</span>
+      )}
     </div>
   );
 });

@@ -605,7 +605,7 @@ const workerFunction = () => {
  */
 const createTreeWorker = () => {
   try {
-    return new Worker('/src/workers/treeWorker.js', { type: 'module' });
+    return new Worker('/workers/treeWorker.js', { type: 'module' });
   } catch (error) {
     console.error('创建Worker失败:', error);
     return null;
@@ -834,6 +834,222 @@ const useTreeWorker = (options) => {
     workerReady,
     workerError,
     ...workerApi
+  };
+};
+
+// 增加缓冲区大小，提高滚动流畅度
+const DEFAULT_NODE_HEIGHT = 40; // 节点高度(px)
+const DEFAULT_BUFFER_SCALE = 3; // 默认缓冲区大小(屏幕高度的倍数)
+
+// 添加节点缓存机制
+const useNodeCache = (initialCapacity = 500) => {
+  // 使用useRef避免重渲染
+  const cacheRef = useRef({
+    visibilityCache: new Map(), // 节点可见性缓存
+    offsetCache: new Map(),     // 节点偏移量缓存
+    recyclePool: [],            // 节点回收池
+    capacity: initialCapacity,  // 缓存容量
+    hits: 0,                    // 缓存命中次数
+    misses: 0                   // 缓存未命中次数
+  });
+  
+  // 获取节点可见性，优先使用缓存
+  const getNodeVisibility = useCallback((nodeId, computeFn) => {
+    const { visibilityCache } = cacheRef.current;
+    
+    if (visibilityCache.has(nodeId)) {
+      cacheRef.current.hits++;
+      return visibilityCache.get(nodeId);
+    }
+    
+    cacheRef.current.misses++;
+    const result = computeFn();
+    
+    // 缓存结果
+    if (visibilityCache.size >= cacheRef.current.capacity) {
+      // 如果缓存已满，清除20%的缓存
+      const keysToDelete = Array.from(visibilityCache.keys())
+        .slice(0, Math.floor(cacheRef.current.capacity * 0.2));
+      
+      keysToDelete.forEach(key => visibilityCache.delete(key));
+    }
+    
+    visibilityCache.set(nodeId, result);
+    return result;
+  }, []);
+  
+  // 获取节点偏移量，优先使用缓存
+  const getNodeOffset = useCallback((nodeId, computeFn) => {
+    const { offsetCache } = cacheRef.current;
+    
+    if (offsetCache.has(nodeId)) {
+      cacheRef.current.hits++;
+      return offsetCache.get(nodeId);
+    }
+    
+    cacheRef.current.misses++;
+    const result = computeFn();
+    
+    // 缓存结果
+    if (offsetCache.size >= cacheRef.current.capacity) {
+      // 如果缓存已满，清除20%的缓存
+      const keysToDelete = Array.from(offsetCache.keys())
+        .slice(0, Math.floor(cacheRef.current.capacity * 0.2));
+      
+      keysToDelete.forEach(key => offsetCache.delete(key));
+    }
+    
+    offsetCache.set(nodeId, result);
+    return result;
+  }, []);
+  
+  // 清除缓存
+  const clearCache = useCallback(() => {
+    cacheRef.current.visibilityCache.clear();
+    cacheRef.current.offsetCache.clear();
+    cacheRef.current.recyclePool = [];
+  }, []);
+  
+  // 获取缓存统计信息
+  const getCacheStats = useCallback(() => {
+    const { hits, misses, visibilityCache, offsetCache } = cacheRef.current;
+    const total = hits + misses;
+    const hitRate = total > 0 ? hits / total : 0;
+    
+    return {
+      hits,
+      misses,
+      total,
+      hitRate,
+      visibilityCacheSize: visibilityCache.size,
+      offsetCacheSize: offsetCache.size
+    };
+  }, []);
+  
+  return {
+    getNodeVisibility,
+    getNodeOffset,
+    clearCache,
+    getCacheStats
+  };
+};
+
+// 优化滚动处理
+const useVirtualScroll = (options) => {
+  const {
+    height,
+    nodeHeight = DEFAULT_NODE_HEIGHT,
+    bufferScale = DEFAULT_BUFFER_SCALE,
+    onVisibleNodesChange
+  } = options;
+  
+  const [scrollTop, setScrollTop] = useState(0);
+  const [visibleNodes, setVisibleNodes] = useState([]);
+  const lastScrollTopRef = useRef(0);
+  const scrollDirectionRef = useRef('down');
+  const scrollingRef = useRef(false);
+  const rafIdRef = useRef(null);
+  const scrollTimerRef = useRef(null);
+  
+  // 计算可见节点
+  const calculateVisibleNodes = useCallback((nodes, scrollPosition, viewportHeight) => {
+    if (!Array.isArray(nodes) || nodes.length === 0) {
+      return [];
+    }
+    
+    // 计算缓冲区大小
+    const buffer = Math.ceil(viewportHeight / nodeHeight) * bufferScale;
+    
+    // 计算可见范围
+    const startIndex = Math.max(0, Math.floor(scrollPosition / nodeHeight) - buffer);
+    const endIndex = Math.min(
+      nodes.length - 1,
+      Math.ceil((scrollPosition + viewportHeight) / nodeHeight) + buffer
+    );
+    
+    // 获取可见节点
+    const visibleNodes = [];
+    let currentOffset = 0;
+    
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      
+      // 如果节点在可见范围内
+      if (i >= startIndex && i <= endIndex) {
+        visibleNodes.push({
+          ...node,
+          offsetTop: i * nodeHeight,
+          index: i
+        });
+      }
+      
+      currentOffset += nodeHeight;
+    }
+    
+    // 通知可见节点数量变化
+    if (onVisibleNodesChange) {
+      onVisibleNodesChange(visibleNodes.length);
+    }
+    
+    return visibleNodes;
+  }, [nodeHeight, bufferScale, onVisibleNodesChange]);
+  
+  // 处理滚动事件
+  const handleScroll = useCallback((e, nodes) => {
+    const newScrollTop = e.target.scrollTop;
+    
+    // 更新滚动方向
+    scrollDirectionRef.current = newScrollTop > lastScrollTopRef.current ? 'down' : 'up';
+    lastScrollTopRef.current = newScrollTop;
+    
+    // 标记正在滚动
+    scrollingRef.current = true;
+    
+    // 清除之前的RAF
+    if (rafIdRef.current) {
+      cancelAnimationFrame(rafIdRef.current);
+    }
+    
+    // 使用RAF优化滚动性能
+    rafIdRef.current = requestAnimationFrame(() => {
+      setScrollTop(newScrollTop);
+      
+      // 计算可见节点
+      const newVisibleNodes = calculateVisibleNodes(nodes, newScrollTop, height);
+      setVisibleNodes(newVisibleNodes);
+      
+      // 清除滚动计时器
+      if (scrollTimerRef.current) {
+        clearTimeout(scrollTimerRef.current);
+      }
+      
+      // 设置滚动结束计时器
+      scrollTimerRef.current = setTimeout(() => {
+        scrollingRef.current = false;
+      }, 150);
+    });
+  }, [calculateVisibleNodes, height]);
+  
+  // 清理资源
+  useEffect(() => {
+    return () => {
+      if (rafIdRef.current) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
+      
+      if (scrollTimerRef.current) {
+        clearTimeout(scrollTimerRef.current);
+      }
+    };
+  }, []);
+  
+  return {
+    scrollTop,
+    visibleNodes,
+    handleScroll,
+    isScrolling: () => scrollingRef.current,
+    scrollDirection: () => scrollDirectionRef.current,
+    calculateVisibleNodes
   };
 };
 
@@ -1407,61 +1623,87 @@ const VirtualAntTree = ({
     const node = processedDataRef.current?.nodeMap.get(nodeId);
     if (!node) return;
     
-    // 获取需要处理的节点集合
+    // 使用Set提高性能
     const nodesToProcess = new Set([nodeId]);
     
-    // 如果有子节点，添加所有子节点
-    if (node.children && node.children.length > 0 && processedDataRef.current) {
-      const childrenKeys = getChildrenKeys(processedDataRef.current.flattenedData, nodeId);
-      childrenKeys.forEach(key => nodesToProcess.add(key));
-    }
-    
-    // 更新选中状态
-    setCheckedKeys(prev => {
-      let newCheckedKeys = [...prev];
-      
-      if (checked) {
-        // 添加所有需要选中的节点
-        nodesToProcess.forEach(id => {
-          if (!newCheckedKeys.includes(id)) {
-            newCheckedKeys.push(id);
-          }
-        });
-      } else {
-        // 移除所有需要取消选中的节点
-        newCheckedKeys = newCheckedKeys.filter(id => !nodesToProcess.has(id));
+    // 使用批处理模式
+    const batchUpdate = () => {
+      // 收集所有需要更新的节点
+      if (node.children && node.children.length > 0 && processedDataRef.current) {
+        const childrenKeys = getChildrenKeys(processedDataRef.current.flattenedData, nodeId);
+        childrenKeys.forEach(key => nodesToProcess.add(key));
       }
       
-      // 触发回调，但不在这里直接修改父节点状态
-      if (onCheck && processedDataRef.current) {
-        const checkedNodes = newCheckedKeys
-          .map(key => processedDataRef.current.nodeMap.get(key))
-          .filter(Boolean);
+      // 批量更新状态
+      setCheckedKeys(prev => {
+        let newCheckedKeys;
         
-        onCheck(newCheckedKeys, {
-          checked,
-          checkedNodes,
-          node,
-          event: 'check',
-          halfCheckedKeys: []
-        });
-      }
-      
-      return newCheckedKeys;
-    });
-    
-    // 标记当前节点状态变更，后续通过Effect处理级联效果
-    if (node) {
-      node.checked = checked;
-      
-      // 延迟处理Worker更新，避免在渲染期间调用
-      requestAnimationFrame(() => {
-        if (performanceMode && !workerError && workerReady && processedDataRef.current) {
-          const nodesToUpdate = [node];
-          workerUpdateNodes(nodesToUpdate);
+        if (checked) {
+          // 使用Set合并去重，提高性能
+          const uniqueKeys = new Set([...prev]);
+          nodesToProcess.forEach(id => uniqueKeys.add(id));
+          newCheckedKeys = Array.from(uniqueKeys);
+        } else {
+          // 使用Set差集，提高性能
+          const keysToRemove = new Set(nodesToProcess);
+          newCheckedKeys = prev.filter(id => !keysToRemove.has(id));
         }
+        
+        // 延迟触发回调，减少重渲染
+        if (onCheck && processedDataRef.current) {
+          setTimeout(() => {
+            const checkedNodes = newCheckedKeys
+              .map(key => processedDataRef.current.nodeMap.get(key))
+              .filter(Boolean);
+            
+            onCheck(newCheckedKeys, {
+              checked,
+              checkedNodes,
+              node,
+              event: 'check',
+              halfCheckedKeys: []
+            });
+          }, 0);
+        }
+        
+        return newCheckedKeys;
       });
-    }
+      
+      // 标记当前节点状态变更
+      if (node) {
+        node.checked = checked;
+        
+        // 延迟处理Worker更新，避免在渲染期间调用
+        if (performanceMode && !workerError && workerReady && processedDataRef.current) {
+          // 使用批量更新模式
+          if (nodesToProcess.size > 100) {
+            // 对于大量节点，使用批处理Worker
+            workerRef.current?.postMessage({
+              type: 'batchUpdate',
+              nodeIds: Array.from(nodesToProcess),
+              checked
+            });
+          } else {
+            // 对于少量节点，使用常规更新
+            const nodesToUpdate = Array.from(nodesToProcess)
+              .map(id => processedDataRef.current.nodeMap.get(id))
+              .filter(Boolean);
+            
+            // 分批发送给Worker
+            const batchSize = 100;
+            for (let i = 0; i < nodesToUpdate.length; i += batchSize) {
+              const batch = nodesToUpdate.slice(i, i + batchSize);
+              setTimeout(() => {
+                workerUpdateNodes(batch);
+              }, 0);
+            }
+          }
+        }
+      }
+    };
+    
+    // 使用requestAnimationFrame确保UI流畅
+    requestAnimationFrame(batchUpdate);
   }, [checkable, getChildrenKeys, onCheck, performanceMode, workerError, workerReady, workerUpdateNodes]);
 
   // 使用Effect处理复选框级联状态更新
