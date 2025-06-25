@@ -1,0 +1,96 @@
+.ultra-optimized-tree {
+  position: relative;
+  
+  .ultra-tree-scroller {
+    border: 1px solid #f0f0f0;
+    border-radius: 2px;
+    
+    &:focus {
+      outline: none;
+      border-color: #1890ff;
+    }
+  }
+  
+  .ultra-tree-content {
+    position: relative;
+  }
+  
+  .ultra-tree-node-container {
+    position: absolute;
+    width: 100%;
+    transform: translateZ(0); // 启用GPU加速
+    will-change: transform; // 提示浏览器该元素会频繁变化
+    contain: layout; // 限制布局影响范围
+  }
+  
+  .ultra-tree-loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    min-height: 200px;
+  }
+  
+  .ultra-tree-toolbar {
+    margin-top: 8px;
+    display: flex;
+    justify-content: flex-end;
+  }
+  
+  // 高亮匹配节点
+  .matched-node {
+    background-color: rgba(24, 144, 255, 0.1);
+    
+    .ant-tree-node-content-wrapper {
+      background-color: transparent;
+    }
+    
+    .matched-text {
+      color: #1890ff;
+      font-weight: bold;
+      background-color: rgba(24, 144, 255, 0.2);
+      padding: 0 2px;
+      border-radius: 2px;
+    }
+  }
+  
+  // 优化滚动性能
+  &:hover {
+    .ultra-tree-scroller {
+      &::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      
+      &::-webkit-scrollbar-thumb {
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 4px;
+      }
+      
+      &::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.05);
+      }
+    }
+  }
+  
+  .ultra-tree-scroller {
+    &::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    
+    &::-webkit-scrollbar-thumb {
+      background: rgba(0, 0, 0, 0.1);
+      border-radius: 3px;
+    }
+    
+    &::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.02);
+    }
+  }
+  
+  // 内存监控
+  .memory-monitor {
+    margin-top: 16px;
+  }
+} 

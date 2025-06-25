@@ -41,16 +41,19 @@ function handleSelectAll(data) {
     return;
   }
   
-  // 分批处理，每批1000个节点
-  const batchSize = 1000;
+  // 分批处理，每批2000个节点，提高处理效率
+  const batchSize = 2000;
   const allKeys = [];
   const userNodes = [];
+  
+  // 预先计算总节点数，减少在循环中的计算
+  const totalNodes = allNodes.length;
   
   // 开始处理
   processBatch(0);
   
   function processBatch(startIndex) {
-    if (startIndex >= allNodes.length) {
+    if (startIndex >= totalNodes) {
       // 处理完成，返回结果
       self.postMessage({
         type: 'selectAllCompleted',
@@ -61,7 +64,7 @@ function handleSelectAll(data) {
       return;
     }
     
-    const endIndex = Math.min(startIndex + batchSize, allNodes.length);
+    const endIndex = Math.min(startIndex + batchSize, totalNodes);
     
     // 处理当前批次
     for (let i = startIndex; i < endIndex; i++) {
@@ -69,18 +72,30 @@ function handleSelectAll(data) {
       allKeys.push(node.key);
       
       if (node.type === 'user') {
-        userNodes.push(node);
+        // 只保留必要的属性，减少内存使用
+        userNodes.push({
+          key: node.key,
+          id: node.id,
+          name: node.name,
+          realName: node.realName,
+          email: node.email,
+          position: node.position,
+          type: node.type,
+          avatar: node.avatar
+        });
       }
     }
     
-    // 发送进度消息
-    self.postMessage({
-      type: 'selectAllProgress',
-      processed: endIndex,
-      total: allNodes.length
-    });
+    // 每处理5个批次才发送一次进度消息，减少通信开销
+    if (startIndex % (batchSize * 5) === 0 || endIndex === totalNodes) {
+      self.postMessage({
+        type: 'selectAllProgress',
+        processed: endIndex,
+        total: totalNodes
+      });
+    }
     
-    // 处理下一批
+    // 处理下一批，使用setTimeout让出执行线程
     setTimeout(() => {
       processBatch(endIndex);
     }, 0);
@@ -103,15 +118,18 @@ function handleSelectUsers(data) {
     return;
   }
   
-  // 分批处理，每批1000个节点
-  const batchSize = 1000;
+  // 分批处理，每批2000个节点
+  const batchSize = 2000;
   const userNodes = [];
+  
+  // 预先计算总节点数
+  const totalNodes = allNodes.length;
   
   // 开始处理
   processBatch(0);
   
   function processBatch(startIndex) {
-    if (startIndex >= allNodes.length) {
+    if (startIndex >= totalNodes) {
       // 处理完成，返回结果
       self.postMessage({
         type: 'selectUsersCompleted',
@@ -121,22 +139,34 @@ function handleSelectUsers(data) {
       return;
     }
     
-    const endIndex = Math.min(startIndex + batchSize, allNodes.length);
+    const endIndex = Math.min(startIndex + batchSize, totalNodes);
     
     // 处理当前批次
     for (let i = startIndex; i < endIndex; i++) {
       const node = allNodes[i];
       if (node.type === 'user') {
-        userNodes.push(node);
+        // 只保留必要的属性
+        userNodes.push({
+          key: node.key,
+          id: node.id,
+          name: node.name,
+          realName: node.realName,
+          email: node.email,
+          position: node.position,
+          type: node.type,
+          avatar: node.avatar
+        });
       }
     }
     
-    // 发送进度消息
-    self.postMessage({
-      type: 'selectUsersProgress',
-      processed: endIndex,
-      total: allNodes.length
-    });
+    // 每处理5个批次才发送一次进度消息
+    if (startIndex % (batchSize * 5) === 0 || endIndex === totalNodes) {
+      self.postMessage({
+        type: 'selectUsersProgress',
+        processed: endIndex,
+        total: totalNodes
+      });
+    }
     
     // 处理下一批
     setTimeout(() => {

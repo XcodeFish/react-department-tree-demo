@@ -77,7 +77,7 @@ self.onmessage = function(e) {
         break;
       default:
         priority = 1;
-    }
+}
     queueMessage(e, priority);
   }
 };
@@ -94,7 +94,7 @@ function handleWorkerMessage(e) {
   }
   
   let flattenedData, scrollTop, viewportHeight, buffer, nodeId, expanded, searchTerm, updatedNodes, nodeIds, checked;
-  let visibleNodes, totalHeight, visibleCount, matchResult;
+  let visibleNodes, totalHeight, visibleCount, matchResult, searchMode;
 
   switch (type) {
     case 'initialize':
@@ -138,8 +138,15 @@ function handleWorkerMessage(e) {
 
     case 'search':
       searchTerm = e.data.searchTerm;
-      matchResult = searchNodes(searchTerm);
-      self.postMessage({ type: 'searchComplete', matchResult });
+      searchMode = e.data.mode || 'complete';
+      matchResult = searchNodes(searchTerm, searchMode);
+      
+      // 发送搜索结果
+      self.postMessage({ 
+        type: 'searchComplete', 
+        result: matchResult,
+        mode: searchMode
+      });
       break;
       
     case 'updateNodes':
@@ -153,7 +160,7 @@ function handleWorkerMessage(e) {
       batchUpdateNodes(nodeIds, checked);
       break;
   }
-  
+
   // 重置高优先级标志
   if (priority === 'high') {
     isProcessingHighPriority = false;
@@ -329,7 +336,7 @@ function updateNodes(updatedNodes) {
       // 添加新节点
       nodeMap.set(node.id, node);
       flattenedData.push(node);
-    }
+      }
   });
   
   // 清除可见性缓存
@@ -356,7 +363,7 @@ function calculateVisibleNodes(scrollTop, viewportHeight, nodeHeight, buffer) {
   const visibleNodes = [];
   let accumulatedHeight = 0;
   let currentIndex = 0;
-
+  
   // 优化：预计算开始和结束索引范围
   const startPosition = Math.max(0, scrollTop - (buffer * nodeHeight));
   const endPosition = scrollTop + viewportHeight + (buffer * nodeHeight);
@@ -392,8 +399,8 @@ function calculateVisibleNodes(scrollTop, viewportHeight, nodeHeight, buffer) {
     totalHeight: accumulatedHeight,
     visibleCount
   };
-}
-
+    }
+    
 /**
  * 节点可见性判断（带缓存）
  * @param {Object} node 节点对象
@@ -408,8 +415,8 @@ function isNodeVisible(node) {
   if (!node.parentId) {
     visibilityCache.set(node.id, true);
     return true;
-  }
-
+    }
+    
   // 递归检查父节点展开状态
   let currentNode = node;
   let isVisible = true;
@@ -464,21 +471,22 @@ function calculateTotalHeight() {
   for (const [id, node] of nodeMap.entries()) {
     if (isNodeVisible(node)) {
       visibleCount++;
-    }
+              }
   }
 
   return {
     totalHeight: visibleCount * NODE_HEIGHT,
     visibleCount
   };
-}
+            }
 
 /**
  * 搜索节点
  * @param {string} term 搜索关键字
+ * @param {string} mode 搜索模式: 'immediate'(即时) 或 'complete'(完整)
  * @returns {Object} 匹配结果
  */
-function searchNodes(term) {
+function searchNodes(term, mode = 'complete') {
   // 确保term是字符串
   const searchTerm = String(term || '');
   
@@ -495,67 +503,71 @@ function searchNodes(term) {
     return { 
       matchCount: 0, 
       matches: [],
+      expandedKeys: [],
       searchTerm: '' // 明确标记这是一个清除搜索的操作
     };
   }
 
   const termLower = searchTerm.toLowerCase();
   const matches = [];
+  const expandedKeys = new Set();
 
+  // 确定处理的节点数量
+  const nodesToProcess = mode === 'immediate' 
+    ? Math.min(1000, nodeMap.size) // 即时模式处理较少节点
+    : nodeMap.size; // 完整模式处理所有节点
+  
+  let processedCount = 0;
+  
   // 标记匹配的节点
   for (const [id, node] of nodeMap.entries()) {
+    // 限制处理节点数量，提高即时搜索响应速度
+    if (mode === 'immediate' && processedCount >= nodesToProcess) break;
+    processedCount++;
+    
     // 重置先前的匹配状态
     const wasMatched = node.matched;
     node.matched = false;
-    
-    // 部门和人员都支持搜索
-    const isMatch = 
-      (node.name && node.name.toLowerCase().includes(termLower)) ||
-      (node.email && node.email.toLowerCase().includes(termLower)) ||
-      (node.position && node.position.toLowerCase().includes(termLower)) ||
-      (node.realName && node.realName.toLowerCase().includes(termLower));
-    
-    // 只有在状态变化时才更新
-    if (isMatch) {
-      node.matched = true;
-      matches.push(node.id);
-    } else if (wasMatched !== isMatch) {
-      // 状态发生变化
-      node.matched = false;
+          
+    // 只搜索员工节点，不搜索部门节点
+    if (node.type === 'user') {
+      const nodeTitle = (node.title || node.name || '').toLowerCase();
+      const nodeEmail = (node.email || '').toLowerCase();
+      const nodePosition = (node.position || '').toLowerCase();
+      const nodeRealName = (node.realName || '').toLowerCase();
+      
+      if (
+        nodeTitle.includes(termLower) ||
+        nodeEmail.includes(termLower) ||
+        nodePosition.includes(termLower) ||
+        nodeRealName.includes(termLower)
+      ) {
+        node.matched = true;
+        matches.push(id);
+        
+        // 收集父节点路径，用于展开
+        let parentId = node.parentId;
+        while (parentId) {
+          expandedKeys.add(parentId);
+          const parent = nodeMap.get(parentId);
+          if (parent) {
+            parentId = parent.parentId;
+          } else {
+            break;
+          }
+        }
+      }
     }
   }
 
-  // 仅当有匹配结果时才展开包含匹配节点的路径
-  if (matches.length > 0) {
-    matches.forEach(matchId => {
-      expandNodePath(matchId);
-    });
-    
-    // 清除可见性缓存以便重新计算
-    visibilityCache.clear();
-  }
+  // 清除可见性缓存，确保重新计算节点可见性
+  visibilityCache.clear();
 
   return {
     matchCount: matches.length,
     matches,
-    searchTerm: searchTerm // 包含搜索词，以便主线程判断
+    expandedKeys: Array.from(expandedKeys),
+    searchTerm,
+    mode
   };
-}
-
-/**
- * 展开包含节点的所有父路径
- * @param {string} nodeId 节点ID
- */
-function expandNodePath(nodeId) {
-  let currentId = nodeMap.get(nodeId)?.parentId;
-
-  while (currentId) {
-    const parent = nodeMap.get(currentId);
-    if (parent) {
-      parent.expanded = true;
-      currentId = parent.parentId;
-    } else {
-      break;
-    }
-  }
 } 

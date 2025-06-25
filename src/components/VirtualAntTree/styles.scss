@@ -415,4 +415,63 @@
       transform: translate(-50%, -50%);
     }
   }
+}
+
+// 搜索高亮样式
+.virtual-ant-tree-search-highlight {
+  background-color: #ffe58f;
+  padding: 0 2px;
+  border-radius: 2px;
+  font-weight: bold;
+  color: #d48806;
+}
+
+// 匹配节点样式
+.virtual-ant-tree-node-matched {
+  background-color: rgba(24, 144, 255, 0.1);
+  
+  &.virtual-ant-tree-node-user {
+    font-weight: 500;
+    
+    .virtual-ant-tree-node-title-matched {
+      color: #1890ff;
+      
+      .virtual-ant-tree-search-highlight {
+        background-color: #1890ff;
+        color: #fff;
+        font-weight: bold;
+        padding: 0 4px;
+        border-radius: 3px;
+      }
+    }
+  }
+  
+  &:hover {
+    background-color: rgba(24, 144, 255, 0.2);
+  }
+}
+
+// 搜索框样式增强
+.virtual-ant-tree-search {
+  position: relative;
+  margin-bottom: 12px;
+  
+  .ant-input-affix-wrapper {
+    &:hover, &:focus {
+      border-color: #1890ff;
+    }
+    
+    .ant-input-prefix {
+      color: rgba(0, 0, 0, 0.45);
+      margin-right: 8px;
+    }
+    
+    .ant-input-clear-icon {
+      color: rgba(0, 0, 0, 0.45);
+      
+      &:hover {
+        color: rgba(0, 0, 0, 0.65);
+      }
+    }
+  }
 } 

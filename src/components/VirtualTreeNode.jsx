@@ -5,7 +5,7 @@
  */
 import React, { memo } from 'react';
 import { CaretDownOutlined, CaretRightOutlined, TeamOutlined, UserOutlined, LoadingOutlined } from '@ant-design/icons';
-import { Checkbox } from 'antd';
+import { Checkbox, Badge } from 'antd';
 import classNames from 'classnames';
 
 const VirtualTreeNode = memo(({
@@ -141,6 +141,9 @@ const VirtualTreeNode = memo(({
     );
   };
 
+  // 判断是否为搜索匹配节点
+  const isMatched = matched || (searchValue && nodeTitle.toLowerCase().includes(searchValue.toLowerCase()));
+
   return (
     <div
       className={classNames(
@@ -148,7 +151,7 @@ const VirtualTreeNode = memo(({
         { 'virtual-ant-tree-node-selected': selected },
         { 'virtual-ant-tree-node-user': type === 'user' },
         { 'virtual-ant-tree-node-department': type !== 'user' },
-        { 'virtual-ant-tree-node-matched': matched || (searchValue && nodeTitle.toLowerCase().includes(searchValue.toLowerCase())) },
+        { 'virtual-ant-tree-node-matched': isMatched },
         { 'virtual-ant-tree-node-block': blockNode },
         { 'virtual-ant-tree-node-selectable': selectable }
       )}
@@ -174,7 +177,17 @@ const VirtualTreeNode = memo(({
       )}
       
       {renderIcon()}
-      <span className="virtual-ant-tree-node-title">{renderTitle()}</span>
+      
+      {/* 添加搜索匹配标记 */}
+      {isMatched && type === 'user' ? (
+        <Badge dot color="#1890ff" offset={[0, 5]}>
+          <span className="virtual-ant-tree-node-title virtual-ant-tree-node-title-matched">
+            {renderTitle()}
+          </span>
+        </Badge>
+      ) : (
+        <span className="virtual-ant-tree-node-title">{renderTitle()}</span>
+      )}
     </div>
   );
 });

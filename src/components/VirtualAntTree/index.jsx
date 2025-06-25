@@ -7,7 +7,7 @@
  * @param {Boolean} props.loading 加载状态
  */
 import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
-import { Spin, Input, Empty, Checkbox, Button, Dropdown, Space, Tooltip } from 'antd';
+import { Spin, Input, Empty, Checkbox, Button, Dropdown, Space, Tooltip, message } from 'antd';
 import { 
   SearchOutlined, 
   CheckOutlined, 
@@ -21,9 +21,15 @@ import VirtualTreeNode from './VirtualTreeNode';
 import { processTreeData, getNodesInViewport, getVisibleNodes } from '../../utils/treeUtils';
 import SelectedCounter from './SelectedCounter';
 import './styles.scss';
+import SearchBox from '../SearchBox';
+import SearchService from '../../services/SearchService';
+import { getSafeTransition, useSafeTransition } from '../../utils/compatUtils';
 
 // 节点高度固定为40px
 const NODE_HEIGHT = 40; 
+
+// 获取安全的transition函数
+const safeStartTransition = getSafeTransition();
 
 // 获取指定节点的所有子节点键值
 const getChildrenKeys = (nodes, nodeId) => {
@@ -264,14 +270,15 @@ const workerFunction = () => {
   };
 
   // 获取可见节点
-  const getVisibleNodes = (nodes, expandedKeys = []) => {
-    if (!nodes || nodes.length === 0) return [];
-
+  const getVisibleNodes = (nodes, options = {}) => {
+    if (!nodes || !Array.isArray(nodes)) return [];
+    
+    const { expandedKeys = [], searchValue = '' } = options;
     const visibleNodes = [];
     const expandedKeysSet = new Set(expandedKeys);
-    const visibilityCache = new Map();
-
-    // 获取指定节点的所有父节点ID
+    const visibilityCache = new Map(); // 当前可见性缓存
+    
+    // 获取节点的所有父节点ID
     const getParentKeys = (node) => {
       const parents = [];
       let current = node;
@@ -285,7 +292,7 @@ const workerFunction = () => {
     };
 
     // 判断节点是否可见
-    const isNodeVisible = (node) => {
+    const isNodeVisible = (node, currentSearchValue = '') => {
       // 检查缓存
       if (visibilityCache.has(node.id || node.key)) {
         return visibilityCache.get(node.id || node.key);
@@ -296,8 +303,41 @@ const workerFunction = () => {
         visibilityCache.set(node.id || node.key, true);
         return true;
       }
+      
+      // 搜索状态下的处理
+      if (currentSearchValue && currentSearchValue.trim() !== '') {
+        // 如果是匹配的员工节点，直接可见
+        if (node.type === 'user' && node.matched) {
+          visibilityCache.set(node.id || node.key, true);
+          return true;
+        }
+        
+        // 如果是部门节点，只有当它是匹配员工的父级路径时才可见
+        if (node.type !== 'user') {
+          // 查找该部门下是否有匹配的员工
+          const hasMatchedChild = findMatchedChildUser(nodes, node.id || node.key);
+          if (hasMatchedChild) {
+            node.expanded = true; // 确保包含匹配员工的部门展开
+            if (expandedKeysSet && !expandedKeysSet.has(node.id || node.key)) {
+              expandedKeysSet.add(node.id || node.key);
+            }
+            visibilityCache.set(node.id || node.key, true);
+            return true;
+          } else {
+            // 没有匹配的员工，在搜索状态下不可见
+            visibilityCache.set(node.id || node.key, false);
+            return false;
+          }
+        }
+        
+        // 非匹配的员工节点在搜索状态下不可见
+        if (node.type === 'user' && !node.matched) {
+          visibilityCache.set(node.id || node.key, false);
+          return false;
+        }
+      }
 
-      // 检查父节点的展开状态
+      // 常规的展开状态检查（非搜索状态）
       const parentKeys = getParentKeys(node);
       let isVisible = true;
       
@@ -313,10 +353,39 @@ const workerFunction = () => {
       visibilityCache.set(node.id || node.key, isVisible);
       return isVisible;
     };
+    
+    // 递归查找部门下是否有匹配的员工节点
+    const findMatchedChildUser = (allNodes, departmentId) => {
+      // 直接子节点中查找匹配的员工
+      const directMatchedUsers = allNodes.filter(node => 
+        node.parentId === departmentId && 
+        node.type === 'user' && 
+        node.matched
+      );
+      
+      if (directMatchedUsers.length > 0) {
+        return true;
+      }
+      
+      // 查找子部门
+      const childDepartments = allNodes.filter(node => 
+        node.parentId === departmentId && 
+        node.type !== 'user'
+      );
+      
+      // 递归检查每个子部门
+      for (const childDept of childDepartments) {
+        if (findMatchedChildUser(allNodes, childDept.id || childDept.key)) {
+          return true;
+        }
+      }
+      
+      return false;
+    };
 
     // 筛选可见节点
     nodes.forEach(node => {
-      if (isNodeVisible(node)) {
+      if (isNodeVisible(node, searchValue)) { // 传递搜索值参数
         visibleNodes.push(node);
       }
     });
@@ -1092,6 +1161,7 @@ const VirtualAntTree = ({
   const [scrollTop, setScrollTop] = useState(0);
   const [totalHeight, setTotalHeight] = useState(0);
   const [forceUpdate, setForceUpdate] = useState(0);
+  const [matchCount, setMatchCount] = useState(0);
 
   // Worker相关状态
   const [workerReady, setWorkerReady] = useState(false);
@@ -1103,6 +1173,9 @@ const VirtualAntTree = ({
   const searchTimerRef = useRef(null);
   const workerRef = useRef(null);
   const lastSelectedNodeRef = useRef(null);
+
+  // 使用安全的useTransition
+  const [isPending, startTransition] = useSafeTransition();
 
   // 处理TreeData
   const processedData = useMemo(() => {
@@ -1231,7 +1304,8 @@ const VirtualAntTree = ({
     // 获取可见节点
     const vNodes = getVisibleNodes(flattenedData, { 
       expandedKeys,
-      visibilityCache
+      visibilityCache,
+      searchValue
     });
     
     // 更新总高度
@@ -1239,7 +1313,7 @@ const VirtualAntTree = ({
     
     // 更新视口内节点
     updateNodesInViewport(vNodes);
-  }, [expandedKeys, processedData]);
+  }, [expandedKeys, processedData, searchValue]);
   
   // 更新视口内需要渲染的节点
   const updateNodesInViewport = useCallback((vNodes) => {
@@ -1328,7 +1402,7 @@ const VirtualAntTree = ({
           
           const vNodes = getVisibleNodes(flattenedData, { 
             expandedKeys,
-            visibilityCache 
+            visibilityCache
           });
           
           const nodes = getNodesInViewport(vNodes, {
@@ -1384,137 +1458,109 @@ const VirtualAntTree = ({
     }
   }, [expandedKeys, onExpand, performanceMode, updateVisibleNodesMainThread, workerError, workerReady, workerToggleNode]);
   
+  // 处理清除搜索
+  const handleClearSearch = useCallback(() => {
+    setSearchValue('');
+    setSearchLoading(false);
+    setMatchCount(0);
+    
+    if (processedDataRef.current) {
+      const { flattenedData } = processedDataRef.current;
+      // 重置匹配状态
+      SearchService.resetMatchState(flattenedData);
+      // 更新可见性计算
+      updateVisibleNodesMainThread();
+    } else if (performanceMode && !workerError && workerReady) {
+      // 使用Worker清除搜索
+      workerSearch('');
+    }
+  }, [performanceMode, workerError, workerReady, updateVisibleNodesMainThread, workerSearch]);
+  
   // 处理搜索
-  const handleSearch = useCallback((e) => {
-    const value = typeof e === 'string' ? e : e.target.value;
-    
+  const handleSearch = useCallback((value, mode = 'complete') => {
     // 避免相同值的重复设置
-    if (value === searchValue) return;
+    if (value === searchValue && mode === 'complete') return;
     
+    // 更新搜索值
     setSearchValue(value);
     
-    if (value) {
+    if (!value) {
+      // 清除搜索状态
+      handleClearSearch();
+      return;
+    }
+    
+    // 显示加载状态
+    if (mode === 'complete') {
       setSearchLoading(true);
-            } else {
-      setSearchLoading(false);
     }
     
-    // 使用debounce延迟执行搜索（通过闭包保存上一个定时器ID）
-    if (searchTimerRef.current) {
-      clearTimeout(searchTimerRef.current);
-    }
-    
-    searchTimerRef.current = setTimeout(() => {
-      // 处理搜索操作
-      const searchAction = () => {
-        if (performanceMode && !workerError && workerReady) {
-          workerSearch(value);
-            } else {
-          // 主线程处理搜索
-          if (processedDataRef.current) {
-            const { flattenedData, visibilityCache } = processedDataRef.current;
-            
-            // 清除之前的匹配状态
-            flattenedData.forEach(node => {
-              node.matched = false;
+    // 使用安全的useTransition
+    if (typeof startTransition === 'function') {
+      startTransition(() => {
+        // 立即执行一次搜索，提供快速反馈
+        if (processedDataRef.current) {
+          const { flattenedData } = processedDataRef.current;
+          
+          // 使用搜索服务进行搜索
+          const searchResult = SearchService.searchUsers(flattenedData, value, mode);
+          
+          // 更新展开的节点
+          if (searchResult.expandedKeys && searchResult.expandedKeys.length > 0) {
+            setExpandedKeys(prev => {
+              const newKeys = new Set([...prev, ...searchResult.expandedKeys]);
+              return Array.from(newKeys);
             });
-            
-            // 如果有搜索词，标记匹配的节点并展开路径
-            if (value) {
-              const lowerValue = value.toLowerCase();
-              const matchedNodeIds = [];
-              
-              // 查找匹配的节点
-              flattenedData.forEach(node => {
-                const nodeTitle = (node.title || node.name || '').toLowerCase();
-                const nodeEmail = (node.email || '').toLowerCase();
-                const nodePosition = (node.position || '').toLowerCase();
-                const nodeRealName = (node.realName || '').toLowerCase();
-                
-                if (
-                  nodeTitle.includes(lowerValue) ||
-                  nodeEmail.includes(lowerValue) ||
-                  nodePosition.includes(lowerValue) ||
-                  nodeRealName.includes(lowerValue)
-                ) {
-                  node.matched = true;
-                  matchedNodeIds.push(node.id);
-                }
-              });
-              
-              // 展开匹配节点的父路径
-              if (matchedNodeIds.length > 0) {
-                const newExpandedKeys = [...expandedKeys];
-                
-                matchedNodeIds.forEach(nodeId => {
-                  let currentNode = flattenedData.find(n => n.id === nodeId);
-                  while (currentNode && currentNode.parentId) {
-                    const parentNode = flattenedData.find(n => n.id === currentNode.parentId);
-                    if (parentNode) {
-                      parentNode.expanded = true;
-                      if (!newExpandedKeys.includes(parentNode.id)) {
-                        newExpandedKeys.push(parentNode.id);
-                      }
-                      currentNode = parentNode;
-                    } else {
-                      break;
-                    }
-                  }
-                });
-                
-                // 更新展开的节点集合
-                setExpandedKeys(newExpandedKeys);
-              }
-            }
-            
-            // 清除可见性缓存
-            visibilityCache.clear();
-            
-            // 计算新的可见节点
-          const vNodes = getVisibleNodes(flattenedData, { 
-            expandedKeys,
-            visibilityCache
-          });
+          }
           
-            // 更新高度
-            setTotalHeight(vNodes.length * NODE_HEIGHT);
-            
-            // 更新视图内节点
-            if (containerRef.current) {
-          const nodes = getNodesInViewport(vNodes, {
-                scrollTop: containerRef.current.scrollTop || 0,
-            viewportHeight: height,
-            nodeHeight: NODE_HEIGHT,
-            overscan: 10
-          });
+          // 更新匹配数量
+          setMatchCount(searchResult.matchCount);
           
-          setVisibleNodes(nodes);
-        }
-            
-            // 更新搜索状态
+          // 更新可见性计算
+          updateVisibleNodesMainThread();
+          
+          // 完成加载状态
+          if (mode === 'complete') {
             setSearchLoading(false);
           }
+        } else if (performanceMode && !workerError && workerReady) {
+          // 使用Worker处理搜索
+          workerSearch(value, mode);
         }
-      };
-      
-      // 使用React 18的并发特性降低UI阻塞风险
-      if (typeof React.startTransition === 'function') {
-        React.startTransition(searchAction);
-      } else {
-        searchAction();
+      });
+    } else {
+      // 直接执行
+      if (processedDataRef.current) {
+        const { flattenedData } = processedDataRef.current;
+        
+        // 使用搜索服务进行搜索
+        const searchResult = SearchService.searchUsers(flattenedData, value, mode);
+        
+        // 更新展开的节点
+        if (searchResult.expandedKeys && searchResult.expandedKeys.length > 0) {
+          setExpandedKeys(prev => {
+            const newKeys = new Set([...prev, ...searchResult.expandedKeys]);
+            return Array.from(newKeys);
+          });
+        }
+        
+        // 更新匹配数量
+        setMatchCount(searchResult.matchCount);
+        
+        // 更新可见性计算
+        updateVisibleNodesMainThread();
+        
+        // 完成加载状态
+        if (mode === 'complete') {
+          setSearchLoading(false);
+        }
+      } else if (performanceMode && !workerError && workerReady) {
+        // 使用Worker处理搜索
+        workerSearch(value, mode);
       }
-    }, 300); // 300ms延迟，防止快速输入时频繁触发搜索
-    
-  }, [
-    searchValue, 
-    performanceMode, 
-    workerError, 
-    workerReady, 
-    workerSearch, 
-    expandedKeys, 
-    height
-  ]);
-  
+    }
+  }, [handleClearSearch, performanceMode, workerError, workerReady, searchValue, updateVisibleNodesMainThread, workerSearch, startTransition]);
+
   // 处理节点异步加载
   const handleLoadData = useCallback(async (node) => {
     if (!loadData || node.loaded || node.isLeaf) {
@@ -1576,7 +1622,7 @@ const VirtualAntTree = ({
         // 强制更新视图
         if (performanceMode && !workerError && workerReady) {
           workerUpdateVisibleNodes(scrollTop);
-    } else {
+        } else {
           // 主线程处理
           updateVisibleNodesMainThread();
         }
@@ -1590,24 +1636,24 @@ const VirtualAntTree = ({
     if (!node) return;
 
     // 更新选中状态
-      if (multiple) {
-        // 多选模式
-        setSelectedKeys(prev => {
+    if (multiple) {
+      // 多选模式
+      setSelectedKeys(prev => {
         const isSelected = prev.includes(nodeId);
         if (isSelected) {
           // 如果已选中，则移除
           const result = prev.filter(id => id !== nodeId);
           onSelect && onSelect(result, { selected: false, nodeIds: [nodeId], node });
           return result;
-          } else {
+        } else {
           // 如果未选中，则添加
           const result = [...prev, nodeId];
           onSelect && onSelect(result, { selected: true, nodeIds: [nodeId], node });
           return result;
-          }
-        });
-      } else {
-        // 单选模式
+        }
+      });
+    } else {
+      // 单选模式
       setSelectedKeys([nodeId]);
       onSelect && onSelect([nodeId], { node, selected: true });
     }
@@ -1638,7 +1684,7 @@ const VirtualAntTree = ({
       setCheckedKeys(prev => {
         let newCheckedKeys;
       
-      if (checked) {
+        if (checked) {
           // 使用Set合并去重，提高性能
           const uniqueKeys = new Set([...prev]);
           nodesToProcess.forEach(id => uniqueKeys.add(id));
@@ -1681,8 +1727,8 @@ const VirtualAntTree = ({
             workerRef.current?.postMessage({
               type: 'batchUpdate',
               nodeIds: Array.from(nodesToProcess),
-          checked
-        });
+              checked
+            });
           } else {
             // 对于少量节点，使用常规更新
             const nodesToUpdate = Array.from(nodesToProcess)
@@ -1714,7 +1760,7 @@ const VirtualAntTree = ({
     const { flattenedData, nodeMap } = processedDataRef.current;
     
     // 1. 计算所有节点的indeterminate状态
-        flattenedData.forEach(node => {
+    flattenedData.forEach(node => {
       if (!node.children || node.children.length === 0) return;
       
       const allChildren = node.children;
@@ -1723,7 +1769,7 @@ const VirtualAntTree = ({
       // 更新部分选中状态
       if (checkedChildren.length > 0 && checkedChildren.length < allChildren.length) {
         node.indeterminate = true;
-              } else {
+      } else {
         node.indeterminate = false;
       }
     });
@@ -1767,6 +1813,65 @@ const VirtualAntTree = ({
     
     const { flattenedData } = processedDataRef.current;
     
+    // 显示加载状态
+    const loadingKey = 'selectAll';
+    message.loading({ content: '正在处理选择...', key: loadingKey });
+    
+    // 如果节点数量超过1000，使用Web Worker处理
+    if (flattenedData.length > 1000 && window.Worker) {
+      try {
+        // 创建临时Worker处理批量操作
+        const selectWorker = new Worker('/workers/batchWorker.js');
+        
+        selectWorker.onmessage = (e) => {
+          const { type, userKeys, userNodes, processed, total } = e.data;
+          
+          if (type === 'selectUsersProgress') {
+            // 更新进度
+            message.loading({ content: `正在处理选择... ${Math.round(processed/total*100)}%`, key: loadingKey });
+          } else if (type === 'selectUsersCompleted') {
+            // 更新状态
+            requestAnimationFrame(() => {
+              // 使用函数式更新
+              setCheckedKeys(() => userKeys);
+              setAllSelected(true);
+              
+              // 通知外部
+              if (onCheck && userKeys.length > 0) {
+                setTimeout(() => {
+                  onCheck(userKeys, { 
+                    checked: true, 
+                    checkedNodes: userNodes
+                  });
+                  message.success({ content: `已选择所有人员 (${userKeys.length}人)`, key: loadingKey });
+                }, 50);
+              } else {
+                message.success({ content: `已选择所有人员 (${userKeys.length}人)`, key: loadingKey });
+              }
+              
+              // 销毁Worker
+              selectWorker.terminate();
+            });
+          }
+        };
+        
+        // 发送数据给Worker处理
+        selectWorker.postMessage({ 
+          type: 'selectUsers', 
+          data: { 
+            allNodes: searchValue 
+              ? flattenedData.filter(node => node.matched || node.type === 'user')
+              : flattenedData
+          } 
+        });
+        return;
+      } catch (error) {
+        console.error('Worker处理错误:', error);
+        // 继续使用常规方式处理
+      }
+    }
+    
+    // 常规处理方式（节点数量少或Worker不可用）
     // 如果当前是搜索状态，只选中匹配的节点
     const nodesToSelect = searchValue 
       ? flattenedData.filter(node => node.matched || node.type === 'user')
@@ -1783,6 +1888,8 @@ const VirtualAntTree = ({
         checkedNodes: nodesToSelect
       });
     }
+    
+    message.success({ content: `已选择所有人员 (${newKeys.length}人)`, key: loadingKey });
   }, [searchValue, onCheck]);
   
   // 全不选功能
@@ -1954,20 +2061,12 @@ const VirtualAntTree = ({
   return (
     <div className="virtual-ant-tree-container">
       {showSearch && (
-        <div className="virtual-ant-tree-search">
-          <Input
-            placeholder={searchPlaceholder}
-            prefix={<SearchOutlined />}
-            value={searchValue}
-            onChange={handleSearch}
-            onPressEnter={handleSearch}
-            allowClear
-            onClear={() => {
-              // 直接调用handleSearch传入空字符串
-              handleSearch({ target: { value: '' } });
-            }}
-          />
-        </div>
+        <SearchBox
+          placeholder={searchPlaceholder}
+          onSearch={handleSearch}
+          onClear={handleClearSearch}
+          debounceTime={200}
+        />
       )}
       
       {/* 添加操作栏 */}

@@ -6,6 +6,8 @@ import VirtualAntTree from './components/VirtualAntTree';
 import PerformanceMonitor from './components/PerformanceMonitor';
 import SelectedCounter from './components/SelectedCounter';
 import { generateTreeData } from './utils/mockData';
+import ErrorBoundary from './components/ErrorBoundary';
+import { checkReactVersion } from './utils/compatUtils';
 
 /**
  * 主应用组件
@@ -215,6 +217,11 @@ function App() {
     loadData(nodeCount);
   }, [dataSize, loadData]);
 
+  // 组件挂载时检查React版本兼容性
+  useEffect(() => {
+    checkReactVersion();
+  }, []);
+
   // 显示会议邀请模态框 - 优化版本
   const showMeetingModal = useCallback(() => {
     // 先显示Modal，再异步加载数据
@@ -397,15 +404,20 @@ function App() {
             // 更新进度
             message.loading({ content: `正在处理选择... ${Math.round(processed/total*100)}%`, key: 'selectAll' });
           } else if (type === 'selectAllCompleted') {
-            // 分批次更新状态
+            // 使用requestAnimationFrame和分批次更新状态，减少UI阻塞
             requestAnimationFrame(() => {
-              setCheckedKeys(allKeys);
-              setCheckedNodes(userNodes);
-              message.success({ content: `已选择所有节点 (${allKeys.length}个)`, key: 'selectAll' });
+              // 使用函数式更新，避免闭包问题
+              setCheckedKeys(() => allKeys);
+              
+              // 延迟更新节点数据，先让UI响应
+              setTimeout(() => {
+                setCheckedNodes(userNodes);
+                message.success({ content: `已选择所有节点 (${allKeys.length}个)`, key: 'selectAll' });
+                
+                // 销毁Worker
+                batchWorker.terminate();
+              }, 50);
             });
-            
-            // 销毁Worker
-            batchWorker.terminate();
           }
         };
         
@@ -430,20 +442,29 @@ function App() {
     const userNodes = [];
     
     // 分批处理
-    const batchSize = 1000;
+    const batchSize = 2000; // 增加批处理大小
     let currentIndex = 0;
     
     function processBatch() {
       if (currentIndex >= allNodes.length) {
         // 完成处理
-        setCheckedKeys(allKeys);
-        setCheckedNodes(userNodes);
-        message.success(`已选择所有节点 (${allKeys.length}个)`);
+        requestAnimationFrame(() => {
+          setCheckedKeys(allKeys);
+          
+          // 延迟更新节点数据
+          setTimeout(() => {
+            setCheckedNodes(userNodes);
+            message.success(`已选择所有节点 (${allKeys.length}个)`);
+          }, 50);
+        });
         return;
       }
       
-      // 更新进度
-      message.loading({ content: `正在处理选择... ${Math.round(currentIndex/allNodes.length*100)}%`, key: 'selectAll' });
+      // 只在处理开始、结束和每20%进度时更新消息
+      const progress = Math.round(currentIndex/allNodes.length*100);
+      if (currentIndex === 0 || progress % 20 === 0 || currentIndex + batchSize >= allNodes.length) {
+        message.loading({ content: `正在处理选择... ${progress}%`, key: 'selectAll' });
+      }
       
       // 处理当前批次
       const endIndex = Math.min(currentIndex + batchSize, allNodes.length);
@@ -452,15 +473,27 @@ function App() {
         allKeys.push(node.key);
         
         if (node.type === 'user') {
-          userNodes.push(node);
+          // 只保留必要属性
+          userNodes.push({
+            key: node.key,
+            id: node.id,
+            name: node.name,
+            realName: node.realName,
+            email: node.email,
+            position: node.position,
+            type: node.type,
+            avatar: node.avatar
+          });
         }
       }
       
       // 更新索引
       currentIndex = endIndex;
       
-      // 处理下一批
-      requestAnimationFrame(processBatch);
+      // 处理下一批，使用setTimeout让出主线程
+      setTimeout(() => {
+        requestAnimationFrame(processBatch);
+      }, 0);
     }
     
     // 开始处理
@@ -492,15 +525,20 @@ function App() {
             // 更新进度
             message.loading({ content: `正在处理选择... ${Math.round(processed/total*100)}%`, key: 'selectUsers' });
           } else if (type === 'selectUsersCompleted') {
-            // 更新状态
+            // 使用requestAnimationFrame和分批次更新状态
             requestAnimationFrame(() => {
-              setCheckedKeys(userKeys);
-              setCheckedNodes(userNodes);
-              message.success({ content: `已选择所有人员 (${userKeys.length}人)`, key: 'selectUsers' });
+              // 使用函数式更新
+              setCheckedKeys(() => userKeys);
+              
+              // 延迟更新节点数据
+              setTimeout(() => {
+                setCheckedNodes(userNodes);
+                message.success({ content: `已选择所有人员 (${userKeys.length}人)`, key: 'selectUsers' });
+                
+                // 销毁Worker
+                batchWorker.terminate();
+              }, 50);
             });
-            
-            // 销毁Worker
-            batchWorker.terminate();
           }
         };
         
@@ -574,7 +612,7 @@ function App() {
         <List
           dataSource={displayNodes}
           // 添加虚拟滚动支持
-          virtual={true}
+          virtual
           itemLayout="horizontal"
           height={300}
           renderItem={node => (
@@ -667,26 +705,28 @@ function App() {
           <Spin spinning={loading} tip={loadingText}>
             {data && data.length > 0 ? (
               <div style={{ position: 'relative' }}>
-                <VirtualAntTree
-                  treeData={data}
-                  height={600}
-                  loading={loading}
-                  checkable={true}
-                  multiple={true}
-                  onCheck={handleCheck}
-                  onSelect={handleSelect}
-                  performanceMode={useWorker}
-                  showSearch={true}
-                  searchPlaceholder="搜索部门或人员..."
-                  emptyText="暂无数据"
-                  loadingText="加载中..."
-                  showIcon={true}
-                  showLine={false}
-                  blockNode={true}
-                  defaultExpandAll={false}
-                  onVisibleNodesChange={handleVisibleNodesChange}
-                  checkedKeys={checkedKeys}
-                />
+                <ErrorBoundary>
+                  <VirtualAntTree
+                    treeData={data}
+                    height={600}
+                    loading={loading}
+                    checkable={true}
+                    multiple={true}
+                    onCheck={handleCheck}
+                    onSelect={handleSelect}
+                    performanceMode={useWorker}
+                    showSearch={true}
+                    searchPlaceholder="搜索部门或人员..."
+                    emptyText="暂无数据"
+                    loadingText="加载中..."
+                    showIcon={true}
+                    showLine={false}
+                    blockNode={true}
+                    defaultExpandAll={false}
+                    onVisibleNodesChange={handleVisibleNodesChange}
+                    checkedKeys={checkedKeys}
+                  />
+                </ErrorBoundary>
                 
                 <SelectedCounter 
                   checkedNodes={allNodes.filter(node => checkedKeys.includes(node.key))}

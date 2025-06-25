@@ -508,12 +508,21 @@ function searchNodes(term) {
     const wasMatched = node.matched;
     node.matched = false;
     
-    // 部门和人员都支持搜索
+    // 搜索多个字段
+    const nodeTitle = (node.title || node.name || '').toLowerCase();
+    const nodeEmail = (node.email || '').toLowerCase();
+    const nodePosition = (node.position || '').toLowerCase();
+    const nodeRealName = (node.realName || '').toLowerCase();
+    const nodePhone = (node.phone || '').toLowerCase();
+    const nodeUserId = (node.userId || '').toLowerCase();
+    
     const isMatch = 
-      (node.name && node.name.toLowerCase().includes(termLower)) ||
-      (node.email && node.email.toLowerCase().includes(termLower)) ||
-      (node.position && node.position.toLowerCase().includes(termLower)) ||
-      (node.realName && node.realName.toLowerCase().includes(termLower));
+      nodeTitle.includes(termLower) || 
+      nodeEmail.includes(termLower) || 
+      nodePosition.includes(termLower) ||
+      nodeRealName.includes(termLower) ||
+      nodePhone.includes(termLower) ||
+      nodeUserId.includes(termLower);
     
     // 只有在状态变化时才更新
     if (isMatch) {
@@ -558,4 +567,6 @@ function expandNodePath(nodeId) {
       break;
     }
   }
-} 
+}
+
+// 文件结束 
